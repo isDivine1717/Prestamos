@@ -1,0 +1,6 @@
+{
+  "name": "Gestor de Préstamos y Cobranza Diaria",
+  "description": "Sistema completo de administración de préstamos personales con cobranza diaria, cálculo de intereses y capital, gestión de expediente de clientes, documentos e informes financieros.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
