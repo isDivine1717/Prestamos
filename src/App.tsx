@@ -20,6 +20,7 @@ import { DocumentViewerModal } from './components/DocumentViewerModal';
 
 const MainAppContent: React.FC = () => {
   const {
+    isAuthLoading,
     isLoggedIn,
     activeTab,
     selectedClientId,
@@ -33,6 +34,19 @@ const MainAppContent: React.FC = () => {
     setRegisterPaymentModalLoan,
     toast
   } = useApp();
+
+  if (isAuthLoading) {
+    return (
+      <div className="min-h-screen bg-[#0A0A0A] text-[#F4F4F5] flex flex-col items-center justify-center p-4">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 rounded-full border-2 border-[#22C55E] border-t-transparent animate-spin" />
+          <p className="text-xs font-semibold text-zinc-400 uppercase tracking-widest">
+            Comprobando sesión...
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (!isLoggedIn) {
     return <LoginPage />;

@@ -96,12 +96,15 @@ export const StorageService = {
 
   isLoggedIn(): boolean {
     const auth = localStorage.getItem(STORAGE_KEYS.AUTH);
-    if (auth === null) return true; // Default logged in for smooth preview usage
     return auth === 'true';
   },
 
   setLoggedIn(status: boolean): void {
-    localStorage.setItem(STORAGE_KEYS.AUTH, status ? 'true' : 'false');
+    if (status) {
+      localStorage.setItem(STORAGE_KEYS.AUTH, 'true');
+    } else {
+      localStorage.removeItem(STORAGE_KEYS.AUTH);
+    }
   },
 
   exportDataJSON(): string {

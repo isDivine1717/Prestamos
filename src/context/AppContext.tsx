@@ -16,6 +16,7 @@ import {
   calculateClientRating,
   generateLoanSchedule
 } from '../utils/finance';
+import { supabase } from '../lib/supabase';
 
 export type AppTab = 'inicio' | 'clientes' | 'cobranza' | 'reportes' | 'configuracion';
 
@@ -31,6 +32,7 @@ interface AppContextType {
   settings: AppSettings;
   adminUser: AdminUser;
   isLoggedIn: boolean;
+  isAuthLoading: boolean;
 
   searchQuery: string;
   setSearchQuery: (query: string) => void;
@@ -82,8 +84,9 @@ interface AppContextType {
   }) => boolean;
 
   updateSettings: (newSettings: Partial<AppSettings>) => void;
-  login: (email: string, pass: string) => boolean;
-  logout: () => void;
+  signUp: (name: string, email: string, pass: string) => Promise<{ success: boolean; requiresConfirmation?: boolean; error?: string }>;
+  login: (email: string, pass: string) => Promise<{ success: boolean; error?: string }>;
+  logout: () => Promise<void>;
   resetDataToDemo: () => void;
   exportBackupJSON: () => void;
   importBackupJSON: (jsonStr: string) => boolean;
@@ -99,8 +102,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [loans, setLoans] = useState<Loan[]>([]);
   const [transactions, setTransactions] = useState<PaymentTransaction[]>([]);
   const [settings, setSettings] = useState<AppSettings>(StorageService.getSettings());
-  const [adminUser] = useState<AdminUser>(DEFAULT_ADMIN);
-  const [isLoggedIn, setIsLoggedIn] = useState<boolean>(StorageService.isLoggedIn());
+  const [adminUser, setAdminUser] = useState<AdminUser>(DEFAULT_ADMIN);
+  const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
+  const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
@@ -119,6 +123,45 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setToast(null);
     }, 3500);
   };
+
+  // Initialize Supabase Auth session & listener
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        setIsLoggedIn(true);
+        const name = session.user.user_metadata?.full_name || session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'Administrador';
+        setAdminUser({
+          email: session.user.email || '',
+          name
+        });
+      } else {
+        setIsLoggedIn(false);
+      }
+      setIsAuthLoading(false);
+    }).catch((err) => {
+      console.error('Error al consultar sesión de Supabase:', err);
+      setIsLoggedIn(false);
+      setIsAuthLoading(false);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        setIsLoggedIn(true);
+        const name = session.user.user_metadata?.full_name || session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'Administrador';
+        setAdminUser({
+          email: session.user.email || '',
+          name
+        });
+      } else {
+        setIsLoggedIn(false);
+      }
+      setIsAuthLoading(false);
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
 
   // Load initial data
   useEffect(() => {
@@ -473,21 +516,88 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast('Configuración guardada.');
   };
 
-  const login = (email: string, pass: string): boolean => {
-    if (email && pass) {
-      setIsLoggedIn(true);
-      StorageService.setLoggedIn(true);
-      showToast('Sesión iniciada correctamente.');
-      return true;
+  const signUp = async (
+    name: string,
+    email: string,
+    pass: string
+  ): Promise<{ success: boolean; requiresConfirmation?: boolean; error?: string }> => {
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password: pass,
+        options: {
+          data: {
+            full_name: name,
+            name: name
+          }
+        }
+      });
+
+      if (error) {
+        let errorMessage = error.message;
+        if (error.message.includes('User already registered') || error.message.includes('already exists')) {
+          errorMessage = 'Este correo electrónico ya se encuentra registrado.';
+        } else if (error.message.includes('Password should be')) {
+          errorMessage = 'La contraseña debe tener al menos 6 caracteres.';
+        } else if (error.message.includes('invalid email')) {
+          errorMessage = 'El formato del correo electrónico no es válido.';
+        }
+        showToast(errorMessage, 'error');
+        return { success: false, error: errorMessage };
+      }
+
+      if (data.user && !data.session) {
+        showToast('Registro exitoso. Revisa tu correo electrónico para confirmar tu cuenta.', 'info');
+        return { success: true, requiresConfirmation: true };
+      }
+
+      showToast('Cuenta creada e inicio de sesión exitoso.');
+      return { success: true };
+    } catch (err: any) {
+      const errorMessage = err?.message || 'Error durante el registro.';
+      showToast(errorMessage, 'error');
+      return { success: false, error: errorMessage };
     }
-    showToast('Credenciales inválidas.', 'error');
-    return false;
   };
 
-  const logout = () => {
-    setIsLoggedIn(false);
-    StorageService.setLoggedIn(false);
-    showToast('Sesión cerrada.', 'info');
+  const login = async (email: string, pass: string): Promise<{ success: boolean; error?: string }> => {
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password: pass
+      });
+
+      if (error) {
+        let errorMessage = 'Error al iniciar sesión.';
+        if (error.message.includes('Invalid login credentials')) {
+          errorMessage = 'Correo electrónico o contraseña incorrectos.';
+        } else if (error.message.includes('Email not confirmed')) {
+          errorMessage = 'Tu correo electrónico aún no ha sido confirmado. Revisa tu bandeja de entrada.';
+        } else {
+          errorMessage = error.message;
+        }
+        showToast(errorMessage, 'error');
+        return { success: false, error: errorMessage };
+      }
+
+      showToast('Sesión iniciada correctamente.');
+      return { success: true };
+    } catch (err: any) {
+      const errorMessage = err?.message || 'Error al iniciar sesión.';
+      showToast(errorMessage, 'error');
+      return { success: false, error: errorMessage };
+    }
+  };
+
+  const logout = async (): Promise<void> => {
+    try {
+      await supabase.auth.signOut();
+    } catch (err) {
+      console.error('Error al cerrar sesión:', err);
+    } finally {
+      setIsLoggedIn(false);
+      showToast('Sesión cerrada.', 'info');
+    }
   };
 
   const resetDataToDemo = () => {
@@ -538,6 +648,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         settings,
         adminUser,
         isLoggedIn,
+        isAuthLoading,
         searchQuery,
         setSearchQuery,
         filterStatus,
@@ -563,6 +674,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         cancelLoan,
         registerPayment,
         updateSettings,
+        signUp,
         login,
         logout,
         resetDataToDemo,
