@@ -1,4 +1,10 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect
+} from 'react';
+
 import {
   Client,
   Loan,
@@ -8,62 +14,111 @@ import {
   ClientDocument,
   PaymentMethod
 } from '../types';
-import { StorageService, DEFAULT_ADMIN } from '../services/storage';
+
+import { DEFAULT_ADMIN } from '../services/storage';
+import { SupabaseStorage } from '../services/supabaseStorage';
+
 import { getTodayFormatted } from '../utils/dates';
+
 import {
   calculatePaymentBreakdown,
-  updateLoanStatusAndSchedule,
   calculateClientRating,
   generateLoanSchedule
 } from '../utils/finance';
+
 import { supabase } from '../lib/supabase';
 
-export type AppTab = 'inicio' | 'clientes' | 'cobranza' | 'reportes' | 'configuracion';
+export type AppTab =
+  | 'inicio'
+  | 'clientes'
+  | 'cobranza'
+  | 'reportes'
+  | 'configuracion';
 
 interface AppContextType {
   activeTab: AppTab;
   setActiveTab: (tab: AppTab) => void;
+
   selectedClientId: string | null;
   setSelectedClientId: (id: string | null) => void;
-  
+
   clients: Client[];
   loans: Loan[];
   transactions: PaymentTransaction[];
   settings: AppSettings;
   adminUser: AdminUser;
+
   isLoggedIn: boolean;
   isAuthLoading: boolean;
 
   searchQuery: string;
   setSearchQuery: (query: string) => void;
+
   filterStatus: string;
   setFilterStatus: (filter: string) => void;
 
-  // Modals & Triggers
   isNewClientModalOpen: boolean;
   setIsNewClientModalOpen: (open: boolean) => void;
+
   isNewLoanModalOpen: boolean;
   setIsNewLoanModalOpen: (open: boolean) => void;
+
   loanClientPreselectId: string | null;
   setLoanClientPreselectId: (id: string | null) => void;
-  
+
   registerPaymentModalLoan: Loan | null;
   setRegisterPaymentModalLoan: (loan: Loan | null) => void;
 
-  viewingDocument: { doc: ClientDocument; clientName: string } | null;
-  setViewingDocument: (item: { doc: ClientDocument; clientName: string } | null) => void;
+  viewingDocument: {
+    doc: ClientDocument;
+    clientName: string;
+  } | null;
 
-  toast: { message: string; type: 'success' | 'error' | 'info' } | null;
-  showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
+  setViewingDocument: (
+    item: {
+      doc: ClientDocument;
+      clientName: string;
+    } | null
+  ) => void;
 
-  // Actions
-  addClient: (clientData: Omit<Client, 'id' | 'createdAt' | 'rating' | 'documents'>) => Client;
-  updateClient: (id: string, clientData: Partial<Client>) => void;
-  deleteClient: (id: string) => boolean;
+  toast: {
+    message: string;
+    type: 'success' | 'error' | 'info';
+  } | null;
 
-  uploadClientDocument: (clientId: string, title: string, type: ClientDocument['type'], fileUrl: string) => void;
-  deleteClientDocument: (clientId: string, documentId: string) => void;
+  showToast: (
+    message: string,
+    type?: 'success' | 'error' | 'info'
+  ) => void;
 
+  // CLIENTES
+  addClient: (
+    clientData: Omit<
+      Client,
+      'id' | 'createdAt' | 'rating' | 'documents'
+    >
+  ) => Promise<Client>;
+
+  updateClient: (
+    id: string,
+    clientData: Partial<Client>
+  ) => Promise<void>;
+
+  deleteClient: (id: string) => Promise<boolean>;
+
+  uploadClientDocument: (
+    clientId: string,
+    title: string,
+    type: ClientDocument['type'],
+    file: File
+  ) => Promise<void>;
+
+  deleteClientDocument: (
+    clientId: string,
+    documentId: string
+  ) => Promise<void>;
+
+  // PRESTAMOS
   createLoan: (loanData: {
     clientId: string;
     capital: number;
@@ -72,113 +127,311 @@ interface AppContextType {
     totalProfit: number;
     normalDays: number;
     graceDays: number;
-  }) => Loan;
+  }) => Promise<Loan>;
 
-  cancelLoan: (loanId: string, reason: string) => void;
+  cancelLoan: (
+    loanId: string,
+    reason: string
+  ) => Promise<void>;
 
+  // PAGOS
   registerPayment: (params: {
     loanId: string;
     amountReceived: number;
     paymentMethod: PaymentMethod;
     note?: string;
-  }) => boolean;
+  }) => Promise<boolean>;
 
-  updateSettings: (newSettings: Partial<AppSettings>) => void;
-  signUp: (name: string, email: string, pass: string) => Promise<{ success: boolean; requiresConfirmation?: boolean; error?: string }>;
-  login: (email: string, pass: string) => Promise<{ success: boolean; error?: string }>;
+  // CONFIGURACION
+  updateSettings: (
+    newSettings: Partial<AppSettings>
+  ) => Promise<void>;
+
+  // AUTH
+  signUp: (
+    name: string,
+    email: string,
+    pass: string
+  ) => Promise<{
+    success: boolean;
+    requiresConfirmation?: boolean;
+    error?: string;
+  }>;
+
+  login: (
+    email: string,
+    pass: string
+  ) => Promise<{
+    success: boolean;
+    error?: string;
+  }>;
+
   logout: () => Promise<void>;
-  resetDataToDemo: () => void;
+
+  // DATOS
+  resetDataToDemo: () => Promise<void>;
   exportBackupJSON: () => void;
   importBackupJSON: (jsonStr: string) => boolean;
 }
 
-const AppContext = createContext<AppContextType | undefined>(undefined);
+const AppContext = createContext<
+  AppContextType | undefined
+>(undefined);
 
-export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [activeTab, setActiveTab] = useState<AppTab>('inicio');
-  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
+export const AppProvider: React.FC<{
+  children: React.ReactNode;
+}> = ({ children }) => {
+  const [activeTab, setActiveTab] =
+    useState<AppTab>('inicio');
 
-  const [clients, setClients] = useState<Client[]>([]);
-  const [loans, setLoans] = useState<Loan[]>([]);
-  const [transactions, setTransactions] = useState<PaymentTransaction[]>([]);
-  const [settings, setSettings] = useState<AppSettings>(StorageService.getSettings());
-  const [adminUser, setAdminUser] = useState<AdminUser>(DEFAULT_ADMIN);
-  const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
-  const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
+  const [selectedClientId, setSelectedClientId] =
+    useState<string | null>(null);
 
-  const [searchQuery, setSearchQuery] = useState('');
-  const [filterStatus, setFilterStatus] = useState('all');
+  const [clients, setClients] =
+    useState<Client[]>([]);
 
-  const [isNewClientModalOpen, setIsNewClientModalOpen] = useState(false);
-  const [isNewLoanModalOpen, setIsNewLoanModalOpen] = useState(false);
-  const [loanClientPreselectId, setLoanClientPreselectId] = useState<string | null>(null);
-  const [registerPaymentModalLoan, setRegisterPaymentModalLoan] = useState<Loan | null>(null);
-  const [viewingDocument, setViewingDocument] = useState<{ doc: ClientDocument; clientName: string } | null>(null);
+  const [loans, setLoans] =
+    useState<Loan[]>([]);
 
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+  const [transactions, setTransactions] =
+    useState<PaymentTransaction[]>([]);
 
-  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
-    setToast({ message, type });
+  const [settings, setSettings] =
+    useState<AppSettings>({
+      defaultNormalDays: 60,
+      defaultGraceDays: 5,
+      dailyCollectionEnabled: true,
+      chargeSundays: true,
+      chargeHolidays: true,
+      lateFeeEnabled: false,
+      lateFeeType: 'fixed',
+      lateFeeAmount: 50,
+      currencySymbol: '$',
+      currencyCode: 'MXN'
+    });
+
+  const [adminUser, setAdminUser] =
+    useState<AdminUser>(DEFAULT_ADMIN);
+
+  const [isLoggedIn, setIsLoggedIn] =
+    useState<boolean>(false);
+
+  const [isAuthLoading, setIsAuthLoading] =
+    useState<boolean>(true);
+
+  const [searchQuery, setSearchQuery] =
+    useState('');
+
+  const [filterStatus, setFilterStatus] =
+    useState('all');
+
+  const [
+    isNewClientModalOpen,
+    setIsNewClientModalOpen
+  ] = useState(false);
+
+  const [
+    isNewLoanModalOpen,
+    setIsNewLoanModalOpen
+  ] = useState(false);
+
+  const [
+    loanClientPreselectId,
+    setLoanClientPreselectId
+  ] = useState<string | null>(null);
+
+  const [
+    registerPaymentModalLoan,
+    setRegisterPaymentModalLoan
+  ] = useState<Loan | null>(null);
+
+  const [
+    viewingDocument,
+    setViewingDocument
+  ] = useState<{
+    doc: ClientDocument;
+    clientName: string;
+  } | null>(null);
+
+  const [toast, setToast] = useState<{
+    message: string;
+    type: 'success' | 'error' | 'info';
+  } | null>(null);
+
+  /* =========================================================
+     TOAST
+  ========================================================= */
+
+  const showToast = (
+    message: string,
+    type: 'success' | 'error' | 'info' = 'success'
+  ) => {
+    setToast({
+      message,
+      type
+    });
+
     setTimeout(() => {
       setToast(null);
     }, 3500);
   };
 
-  // Initialize Supabase Auth session & listener
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
-        setIsLoggedIn(true);
-        const name = session.user.user_metadata?.full_name || session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'Administrador';
-        setAdminUser({
-          email: session.user.email || '',
-          name
-        });
-      } else {
-        setIsLoggedIn(false);
-      }
-      setIsAuthLoading(false);
-    }).catch((err) => {
-      console.error('Error al consultar sesión de Supabase:', err);
-      setIsLoggedIn(false);
-      setIsAuthLoading(false);
-    });
+  /* =========================================================
+     AUTH
+  ========================================================= */
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user) {
-        setIsLoggedIn(true);
-        const name = session.user.user_metadata?.full_name || session.user.user_metadata?.name || session.user.email?.split('@')[0] || 'Administrador';
-        setAdminUser({
-          email: session.user.email || '',
-          name
-        });
-      } else {
-        setIsLoggedIn(false);
+  useEffect(() => {
+    let mounted = true;
+
+    const initializeAuth = async () => {
+      try {
+        const {
+          data: { session }
+        } = await supabase.auth.getSession();
+
+        if (!mounted) return;
+
+        if (session?.user) {
+          setIsLoggedIn(true);
+
+          const name =
+            session.user.user_metadata?.full_name ||
+            session.user.user_metadata?.name ||
+            session.user.email?.split('@')[0] ||
+            'Administrador';
+
+          setAdminUser({
+            email:
+              session.user.email || '',
+            name
+          });
+        } else {
+          setIsLoggedIn(false);
+        }
+      } catch (error) {
+        console.error(
+          'Error al consultar sesión de Supabase:',
+          error
+        );
+
+        if (mounted) {
+          setIsLoggedIn(false);
+        }
+      } finally {
+        if (mounted) {
+          setIsAuthLoading(false);
+        }
       }
-      setIsAuthLoading(false);
-    });
+    };
+
+    initializeAuth();
+
+    const {
+      data: { subscription }
+    } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        if (!mounted) return;
+
+        if (session?.user) {
+          setIsLoggedIn(true);
+
+          const name =
+            session.user.user_metadata?.full_name ||
+            session.user.user_metadata?.name ||
+            session.user.email?.split('@')[0] ||
+            'Administrador';
+
+          setAdminUser({
+            email:
+              session.user.email || '',
+            name
+          });
+        } else {
+          setIsLoggedIn(false);
+          setClients([]);
+          setLoans([]);
+          setTransactions([]);
+        }
+
+        setIsAuthLoading(false);
+      }
+    );
 
     return () => {
+      mounted = false;
       subscription.unsubscribe();
     };
   }, []);
 
-  // Load initial data
-  useEffect(() => {
-    const loadedClients = StorageService.getClients();
-    const loadedLoans = StorageService.getLoans();
-    const loadedTxns = StorageService.getTransactions();
-    
-    setClients(loadedClients);
-    setLoans(loadedLoans);
-    setTransactions(loadedTxns);
-  }, []);
+  /* =========================================================
+     LOAD SUPABASE DATA
+  ========================================================= */
 
-  // Save changes
-  const refreshClientRatings = (currentClients: Client[], currentLoans: Loan[], currentTxns: PaymentTransaction[]) => {
+  useEffect(() => {
+    if (!isLoggedIn) {
+      setClients([]);
+      setLoans([]);
+      setTransactions([]);
+      return;
+    }
+
+    const loadData = async () => {
+      try {
+        const [
+          loadedClients,
+          loadedLoans,
+          loadedTransactions,
+          loadedSettings
+        ] = await Promise.all([
+          SupabaseStorage.getClients(),
+          SupabaseStorage.getLoans(),
+          SupabaseStorage.getTransactions(),
+          SupabaseStorage.getSettings()
+        ]);
+
+        setClients(loadedClients);
+        setLoans(loadedLoans);
+        setTransactions(loadedTransactions);
+        setSettings(loadedSettings);
+      } catch (error: any) {
+        console.error(
+          'Error cargando datos desde Supabase:',
+          error
+        );
+
+        showToast(
+          error?.message ||
+            'No se pudieron cargar los datos.',
+          'error'
+        );
+      }
+    };
+
+    loadData();
+  }, [isLoggedIn]);
+
+  /* =========================================================
+     CLIENT RATINGS
+  ========================================================= */
+
+  const refreshClientRatings = (
+    currentClients: Client[],
+    currentLoans: Loan[],
+    currentTxns: PaymentTransaction[]
+  ) => {
     return currentClients.map(client => {
-      const clientLoans = currentLoans.filter(l => l.clientId === client.id);
-      const ratingInfo = calculateClientRating(clientLoans, currentTxns);
+      const clientLoans =
+        currentLoans.filter(
+          loan =>
+            loan.clientId === client.id
+        );
+
+      const ratingInfo =
+        calculateClientRating(
+          clientLoans,
+          currentTxns
+        );
+
       return {
         ...client,
         rating: ratingInfo.rating
@@ -186,498 +439,1262 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
-  // CRUD Client
-  const addClient = (clientData: Omit<Client, 'id' | 'createdAt' | 'rating' | 'documents'>): Client => {
-    const newClient: Client = {
-      ...clientData,
-      id: `cli_${Date.now()}`,
-      createdAt: getTodayFormatted(),
-      rating: 'buen_pagador',
-      documents: []
-    };
+  /* =========================================================
+     CREATE CLIENT
+  ========================================================= */
 
-    const updated = [newClient, ...clients];
-    setClients(updated);
-    StorageService.saveClients(updated);
-    showToast(`Cliente ${newClient.firstName} ${newClient.lastName} creado exitosamente.`);
-    return newClient;
-  };
-
-  const updateClient = (id: string, clientData: Partial<Client>) => {
-    const updated = clients.map(c => c.id === id ? { ...c, ...clientData } : c);
-    setClients(updated);
-    StorageService.saveClients(updated);
-    showToast('Expediente del cliente actualizado.');
-  };
-
-  const deleteClient = (id: string): boolean => {
+  const addClient = async (
+    clientData: Omit<
+      Client,
+      'id' | 'createdAt' | 'rating' | 'documents'
+    >
+  ): Promise<Client> => {
     try {
-      const targetClient = clients.find(c => c.id === id);
+      const newClient =
+        await SupabaseStorage.createClient(
+          clientData
+        );
+
+      setClients(prev => [
+        newClient,
+        ...prev
+      ]);
+
+      showToast(
+        `Cliente ${newClient.firstName} ${newClient.lastName} creado exitosamente.`
+      );
+
+      return newClient;
+    } catch (error: any) {
+      console.error(
+        'Error creando cliente:',
+        error
+      );
+
+      showToast(
+        error?.message ||
+          'No se pudo crear el cliente.',
+        'error'
+      );
+
+      throw error;
+    }
+  };
+
+  /* =========================================================
+     UPDATE CLIENT
+  ========================================================= */
+
+  const updateClient = async (
+    id: string,
+    clientData: Partial<Client>
+  ): Promise<void> => {
+    try {
+      const updatedClient =
+        await SupabaseStorage.updateClient(
+          id,
+          clientData
+        );
+
+      setClients(prev =>
+        prev.map(client =>
+          client.id === id
+            ? updatedClient
+            : client
+        )
+      );
+
+      showToast(
+        'Expediente del cliente actualizado.'
+      );
+    } catch (error: any) {
+      console.error(
+        'Error actualizando cliente:',
+        error
+      );
+
+      showToast(
+        error?.message ||
+          'No se pudo actualizar el cliente.',
+        'error'
+      );
+
+      throw error;
+    }
+  };
+
+  /* =========================================================
+     DELETE CLIENT
+  ========================================================= */
+
+  const deleteClient = async (
+    id: string
+  ): Promise<boolean> => {
+    try {
+      const targetClient =
+        clients.find(
+          client => client.id === id
+        );
+
       if (!targetClient) {
-        showToast('No se pudo encontrar el cliente.', 'error');
+        showToast(
+          'No se pudo encontrar el cliente.',
+          'error'
+        );
+
         return false;
       }
 
-      // Collect all loan IDs associated with this client
-      const clientLoans = loans.filter(l => l.clientId === id);
-      const clientLoanIds = clientLoans.map(l => l.id);
+      await SupabaseStorage.deleteClient(id);
 
-      // Filter out client, loans, and transactions completely
-      const updatedClients = clients.filter(c => c.id !== id);
-      const updatedLoans = loans.filter(l => l.clientId !== id);
-      const updatedTxns = transactions.filter(
-        t => t.clientId !== id && !clientLoanIds.includes(t.loanId)
+      setClients(prev =>
+        prev.filter(
+          client => client.id !== id
+        )
       );
 
-      // Update state
-      setClients(updatedClients);
-      setLoans(updatedLoans);
-      setTransactions(updatedTxns);
+      setLoans(prev =>
+        prev.filter(
+          loan => loan.clientId !== id
+        )
+      );
 
-      // Save to storage
-      StorageService.saveClients(updatedClients);
-      StorageService.saveLoans(updatedLoans);
-      StorageService.saveTransactions(updatedTxns);
+      setTransactions(prev =>
+        prev.filter(
+          transaction =>
+            transaction.clientId !== id
+        )
+      );
 
-      // Clean up references in state
       if (selectedClientId === id) {
         setSelectedClientId(null);
       }
-      if (registerPaymentModalLoan && registerPaymentModalLoan.clientId === id) {
+
+      if (
+        registerPaymentModalLoan &&
+        registerPaymentModalLoan.clientId === id
+      ) {
         setRegisterPaymentModalLoan(null);
       }
+
       if (loanClientPreselectId === id) {
         setLoanClientPreselectId(null);
       }
-      if (viewingDocument && viewingDocument.doc.clientId === id) {
+
+      if (
+        viewingDocument &&
+        viewingDocument.doc.clientId === id
+      ) {
         setViewingDocument(null);
       }
 
-      showToast('Cliente eliminado correctamente.', 'success');
+      showToast(
+        'Cliente eliminado correctamente.',
+        'success'
+      );
+
       return true;
-    } catch (error) {
-      showToast('No se pudo eliminar el cliente. Inténtalo nuevamente.', 'error');
+    } catch (error: any) {
+      console.error(
+        'Error eliminando cliente:',
+        error
+      );
+
+      showToast(
+        error?.message ||
+          'No se pudo eliminar el cliente.',
+        'error'
+      );
+
       return false;
     }
   };
 
-  // Documents
-  const uploadClientDocument = (clientId: string, title: string, type: ClientDocument['type'], fileUrl: string) => {
-    const newDoc: ClientDocument = {
-      id: `doc_${Date.now()}`,
-      clientId,
-      title,
-      type,
-      fileUrl,
-      uploadedAt: new Date().toISOString()
-    };
+  /* =========================================================
+     DOCUMENTS - SUPABASE STORAGE
+  ========================================================= */
 
-    const updatedClients = clients.map(c => {
-      if (c.id === clientId) {
-        const existingDocs = c.documents || [];
-        return {
-          ...c,
-          documents: [newDoc, ...existingDocs]
-        };
-      }
-      return c;
-    });
+  const uploadClientDocument = async (
+    clientId: string,
+    title: string,
+    type: ClientDocument['type'],
+    file: File
+  ): Promise<void> => {
+    try {
+      const newDocument =
+        await SupabaseStorage.uploadClientDocument(
+          clientId,
+          title,
+          type,
+          file
+        );
 
-    setClients(updatedClients);
-    StorageService.saveClients(updatedClients);
-    showToast(`Documento "${title}" añadido al expediente.`);
-  };
+      setClients(prev =>
+        prev.map(client => {
+          if (client.id !== clientId) {
+            return client;
+          }
 
-  const deleteClientDocument = (clientId: string, documentId: string) => {
-    const updatedClients = clients.map(c => {
-      if (c.id === clientId) {
-        return {
-          ...c,
-          documents: (c.documents || []).filter(d => d.id !== documentId)
-        };
-      }
-      return c;
-    });
+          return {
+            ...client,
+            documents: [
+              newDocument,
+              ...(client.documents || [])
+            ]
+          };
+        })
+      );
 
-    setClients(updatedClients);
-    StorageService.saveClients(updatedClients);
-    showToast('Documento eliminado.', 'info');
-  };
+      showToast(
+        `Documento "${title}" añadido al expediente.`
+      );
+    } catch (error: any) {
+      console.error(
+        'Error subiendo documento:',
+        error
+      );
 
-  // Create Loan
-  const createLoan = (loanData: {
-    clientId: string;
-    capital: number;
-    profitType: 'fixed' | 'percentage';
-    profitValue: number;
-    totalProfit: number;
-    normalDays: number;
-    graceDays: number;
-  }): Loan => {
-    const client = clients.find(c => c.id === loanData.clientId);
-    const clientName = client ? `${client.firstName} ${client.lastName}` : 'Cliente';
-    const totalToPay = loanData.capital + loanData.totalProfit;
-    const dailyPayment = Math.round((totalToPay / loanData.normalDays + Number.EPSILON) * 100) / 100;
-    const startDate = getTodayFormatted();
+      showToast(
+        error?.message ||
+          'No se pudo subir el documento.',
+        'error'
+      );
 
-    const schedule = StorageService.getLoans(); // Ensure sync
-    const newSchedule = loanData;
-
-    const rawLoan: Loan = {
-      id: `prestamo_${Math.floor(1000 + Math.random() * 9000)}`,
-      clientId: loanData.clientId,
-      clientName,
-      startDate,
-      capital: loanData.capital,
-      profitType: loanData.profitType,
-      profitValue: loanData.profitValue,
-      totalProfit: loanData.totalProfit,
-      totalToPay,
-      normalDays: loanData.normalDays,
-      graceDays: loanData.graceDays,
-      dailyPayment,
-      status: 'active',
-      capitalRecovered: 0,
-      profitRecovered: 0,
-      totalPaid: 0,
-      balancePending: totalToPay,
-      schedule: []
-    };
-
-    // Build loan schedule using dates helper
-    const newScheduleDays = generateLoanSchedule(
-      startDate,
-      totalToPay,
-      loanData.normalDays,
-      loanData.graceDays
-    );
-
-    const completedLoan: Loan = {
-      ...rawLoan,
-      schedule: newScheduleDays
-    };
-
-    const updatedLoans = [completedLoan, ...loans];
-    setLoans(updatedLoans);
-    StorageService.saveLoans(updatedLoans);
-
-    // Update client ratings
-    const ratedClients = refreshClientRatings(clients, updatedLoans, transactions);
-    setClients(ratedClients);
-    StorageService.saveClients(ratedClients);
-
-    showToast(`Préstamo de $${totalToPay.toLocaleString('es-MX')} registrado correctamente.`);
-    return completedLoan;
-  };
-
-  // Cancel Loan
-  const cancelLoan = (loanId: string, reason: string) => {
-    const today = getTodayFormatted();
-    const updatedLoans = loans.map(loan => {
-      if (loan.id === loanId) {
-        return {
-          ...loan,
-          status: 'cancelled' as const,
-          cancelledAt: today,
-          cancellationReason: reason
-        };
-      }
-      return loan;
-    });
-
-    setLoans(updatedLoans);
-    StorageService.saveLoans(updatedLoans);
-    showToast('El préstamo ha sido marcado como cancelado.', 'info');
-  };
-
-  // Register Payment
-  const registerPayment = (params: {
-    loanId: string;
-    amountReceived: number;
-    paymentMethod: PaymentMethod;
-    note?: string;
-  }): boolean => {
-    const loan = loans.find(l => l.id === params.loanId);
-    if (!loan) {
-      showToast('No se encontró el préstamo especificado.', 'error');
-      return false;
+      throw error;
     }
+  };
 
-    const today = getTodayFormatted();
-    const timestamp = new Date().toISOString();
+  const deleteClientDocument = async (
+    clientId: string,
+    documentId: string
+  ): Promise<void> => {
+    try {
+      await SupabaseStorage.deleteClientDocument(
+        clientId,
+        documentId
+      );
 
-    // Breakdown capital vs profit
-    const { capitalPortion, profitPortion } = calculatePaymentBreakdown(
-      params.amountReceived,
-      loan.capital,
-      loan.totalToPay
-    );
+      setClients(prev =>
+        prev.map(client => {
+          if (client.id !== clientId) {
+            return client;
+          }
 
-    // Find target day in schedule: today's date if exists, or first pending/overdue day
-    let dayIndex = loan.schedule.findIndex(d => d.date === today);
-    if (dayIndex === -1) {
-      dayIndex = loan.schedule.findIndex(d => d.status === 'pending' || d.status === 'overdue' || d.status === 'partial');
+          return {
+            ...client,
+            documents: (
+              client.documents || []
+            ).filter(
+              document =>
+                document.id !== documentId
+            )
+          };
+        })
+      );
+
+      if (
+        viewingDocument &&
+        viewingDocument.doc.id === documentId
+      ) {
+        setViewingDocument(null);
+      }
+
+      showToast(
+        'Documento eliminado.',
+        'info'
+      );
+    } catch (error: any) {
+      console.error(
+        'Error eliminando documento:',
+        error
+      );
+
+      showToast(
+        error?.message ||
+          'No se pudo eliminar el documento.',
+        'error'
+      );
+
+      throw error;
     }
-    if (dayIndex === -1) {
-      dayIndex = 0;
+  };
+
+  /* =========================================================
+     CREATE LOAN
+  ========================================================= */
+
+  const createLoan = async (
+    loanData: {
+      clientId: string;
+      capital: number;
+      profitType: 'fixed' | 'percentage';
+      profitValue: number;
+      totalProfit: number;
+      normalDays: number;
+      graceDays: number;
     }
+  ): Promise<Loan> => {
+    try {
+      const client = clients.find(
+        item =>
+          item.id === loanData.clientId
+      );
 
-    const targetDay = loan.schedule[dayIndex];
-    const expectedAmount = targetDay ? targetDay.expectedAmount : loan.dailyPayment;
+      if (!client) {
+        throw new Error(
+          'No se encontró el cliente seleccionado.'
+        );
+      }
 
-    // Create transaction log
-    const newTxn: PaymentTransaction = {
-      id: `tx_${Date.now()}`,
-      loanId: loan.id,
-      clientId: loan.clientId,
-      clientName: loan.clientName,
-      date: today,
-      timestamp,
-      expectedAmount,
-      amountReceived: params.amountReceived,
-      capitalPortion,
-      profitPortion,
-      difference: Math.round((params.amountReceived - expectedAmount + Number.EPSILON) * 100) / 100,
-      paymentMethod: params.paymentMethod,
-      note: params.note,
-      dayNumber: targetDay ? targetDay.dayNumber : undefined
-    };
+      const totalToPay =
+        loanData.capital +
+        loanData.totalProfit;
 
-    // Update schedule
-    const updatedSchedule = loan.schedule.map((day, idx) => {
-      if (idx === dayIndex) {
-        const newPaidAmount = Math.round((day.paidAmount + params.amountReceived + Number.EPSILON) * 100) / 100;
-        let newStatus = day.status;
-        if (newPaidAmount >= day.expectedAmount && day.expectedAmount > 0) {
-          newStatus = newPaidAmount > day.expectedAmount ? 'surplus' : 'paid';
-        } else if (newPaidAmount > 0) {
+      const dailyPayment =
+        Math.round(
+          (
+            totalToPay /
+              loanData.normalDays +
+            Number.EPSILON
+          ) * 100
+        ) / 100;
+
+      const startDate =
+        getTodayFormatted();
+
+      const schedule =
+        generateLoanSchedule(
+          startDate,
+          totalToPay,
+          loanData.normalDays,
+          loanData.graceDays
+        );
+
+      const loanDataForSupabase = {
+        clientId: loanData.clientId,
+        startDate,
+        capital: loanData.capital,
+        profitType: loanData.profitType,
+        profitValue: loanData.profitValue,
+        totalProfit: loanData.totalProfit,
+        totalToPay,
+        normalDays: loanData.normalDays,
+        graceDays: loanData.graceDays,
+        dailyPayment,
+        status: 'active' as const,
+        capitalRecovered: 0,
+        profitRecovered: 0,
+        totalPaid: 0,
+        balancePending: totalToPay,
+        liquidatedAt: undefined,
+        cancelledAt: undefined,
+        cancellationReason: undefined,
+        schedule
+      };
+
+      const newLoan =
+        await SupabaseStorage.createLoan(
+          loanDataForSupabase
+        );
+
+      setLoans(prev => [
+        newLoan,
+        ...prev
+      ]);
+
+      showToast(
+        `Préstamo de $${totalToPay.toLocaleString(
+          'es-MX'
+        )} registrado correctamente.`
+      );
+
+      return newLoan;
+    } catch (error: any) {
+      console.error(
+        'Error creando préstamo:',
+        error
+      );
+
+      showToast(
+        error?.message ||
+          'No se pudo crear el préstamo.',
+        'error'
+      );
+
+      throw error;
+    }
+  };
+
+  /* =========================================================
+     CANCEL LOAN
+  ========================================================= */
+
+  const cancelLoan = async (
+    loanId: string,
+    reason: string
+  ): Promise<void> => {
+    try {
+      const updatedLoan =
+        await SupabaseStorage.cancelLoan(
+          loanId,
+          reason
+        );
+
+      setLoans(prev =>
+        prev.map(loan =>
+          loan.id === loanId
+            ? updatedLoan
+            : loan
+        )
+      );
+
+      showToast(
+        'El préstamo ha sido marcado como cancelado.',
+        'info'
+      );
+    } catch (error: any) {
+      console.error(
+        'Error cancelando préstamo:',
+        error
+      );
+
+      showToast(
+        error?.message ||
+          'No se pudo cancelar el préstamo.',
+        'error'
+      );
+
+      throw error;
+    }
+  };
+
+  /* =========================================================
+     REGISTER PAYMENT
+  ========================================================= */
+
+  const registerPayment = async (
+    params: {
+      loanId: string;
+      amountReceived: number;
+      paymentMethod: PaymentMethod;
+      note?: string;
+    }
+  ): Promise<boolean> => {
+    try {
+      const loan = loans.find(
+        item =>
+          item.id === params.loanId
+      );
+
+      if (!loan) {
+        showToast(
+          'No se encontró el préstamo especificado.',
+          'error'
+        );
+
+        return false;
+      }
+
+      const today =
+        getTodayFormatted();
+
+      const timestamp =
+        new Date().toISOString();
+
+      /* -----------------------------------------
+         CALCULAR CAPITAL Y GANANCIA
+      ----------------------------------------- */
+
+      const {
+        capitalPortion,
+        profitPortion
+      } =
+        calculatePaymentBreakdown(
+          params.amountReceived,
+          loan.capital,
+          loan.totalToPay
+        );
+
+      /* -----------------------------------------
+         BUSCAR DÍA DEL PAGO
+      ----------------------------------------- */
+
+      let dayIndex =
+        loan.schedule.findIndex(
+          day => day.date === today
+        );
+
+      if (dayIndex === -1) {
+        dayIndex =
+          loan.schedule.findIndex(
+            day =>
+              day.status === 'pending' ||
+              day.status === 'overdue' ||
+              day.status === 'partial'
+          );
+      }
+
+      if (dayIndex === -1) {
+        dayIndex = 0;
+      }
+
+      const targetDay =
+        loan.schedule[dayIndex];
+
+      const expectedAmount =
+        targetDay
+          ? targetDay.expectedAmount
+          : loan.dailyPayment;
+
+      /* -----------------------------------------
+         CREAR PAGO EN SUPABASE
+      ----------------------------------------- */
+
+      const newTransaction =
+        await SupabaseStorage.createPayment({
+          loanId: loan.id,
+          clientId: loan.clientId,
+          paymentDate: today,
+          expectedAmount,
+          amountReceived:
+            params.amountReceived,
+          capitalPortion,
+          profitPortion,
+          difference:
+            Math.round(
+              (
+                params.amountReceived -
+                expectedAmount +
+                Number.EPSILON
+              ) * 100
+            ) / 100,
+          paymentMethod:
+            params.paymentMethod,
+          note: params.note,
+          dayNumber: targetDay
+            ? targetDay.dayNumber
+            : undefined
+        });
+
+      /* -----------------------------------------
+         ACTUALIZAR DÍA DEL CALENDARIO
+      ----------------------------------------- */
+
+      if (targetDay) {
+        const newPaidAmount =
+          Math.round(
+            (
+              targetDay.paidAmount +
+              params.amountReceived +
+              Number.EPSILON
+            ) * 100
+          ) / 100;
+
+        let newStatus =
+          targetDay.status;
+
+        if (
+          newPaidAmount >=
+            targetDay.expectedAmount &&
+          targetDay.expectedAmount > 0
+        ) {
+          newStatus =
+            newPaidAmount >
+            targetDay.expectedAmount
+              ? 'surplus'
+              : 'paid';
+        } else if (
+          newPaidAmount > 0
+        ) {
           newStatus = 'partial';
         }
-        return {
-          ...day,
-          paidAmount: newPaidAmount,
-          status: newStatus,
-          paidAt: timestamp,
-          paymentMethod: params.paymentMethod,
-          note: params.note || day.note,
-          transactionId: newTxn.id
-        };
+
+        await SupabaseStorage.updateScheduleDay(
+          loan.id,
+          targetDay.dayNumber,
+          {
+            paidAmount: newPaidAmount,
+            status: newStatus,
+            paidAt: timestamp,
+            paymentMethod:
+              params.paymentMethod,
+            note: params.note,
+            transactionId:
+              newTransaction.id
+          }
+        );
       }
-      return day;
-    });
 
-    const newTotalPaid = Math.round((loan.totalPaid + params.amountReceived + Number.EPSILON) * 100) / 100;
-    const newCapRecovered = Math.round((loan.capitalRecovered + capitalPortion + Number.EPSILON) * 100) / 100;
-    const newProfRecovered = Math.round((loan.profitRecovered + profitPortion + Number.EPSILON) * 100) / 100;
-    const newBalancePending = Math.max(0, Math.round((loan.totalToPay - newTotalPaid + Number.EPSILON) * 100) / 100);
+      /* -----------------------------------------
+         ACTUALIZAR TOTALES DEL PRÉSTAMO
+      ----------------------------------------- */
 
-    let newLoanStatus = loan.status;
-    if (newBalancePending <= 0) {
-      newLoanStatus = 'liquidated';
-    } else {
-      // re-check overdue
-      const stillHasOverdue = updatedSchedule.some(d => d.status === 'overdue');
-      newLoanStatus = stillHasOverdue ? 'overdue' : 'active';
+      const newTotalPaid =
+        Math.round(
+          (
+            loan.totalPaid +
+            params.amountReceived +
+            Number.EPSILON
+          ) * 100
+        ) / 100;
+
+      const newCapitalRecovered =
+        Math.round(
+          (
+            loan.capitalRecovered +
+            capitalPortion +
+            Number.EPSILON
+          ) * 100
+        ) / 100;
+
+      const newProfitRecovered =
+        Math.round(
+          (
+            loan.profitRecovered +
+            profitPortion +
+            Number.EPSILON
+          ) * 100
+        ) / 100;
+
+      const newBalancePending =
+        Math.max(
+          0,
+          Math.round(
+            (
+              loan.totalToPay -
+              newTotalPaid +
+              Number.EPSILON
+            ) * 100
+          ) / 100
+        );
+
+      let newLoanStatus =
+        loan.status;
+
+      if (newBalancePending <= 0) {
+        newLoanStatus =
+          'liquidated';
+      } else {
+        const updatedSchedule =
+          loan.schedule.map(
+            (day, index) => {
+              if (
+                index !== dayIndex
+              ) {
+                return day;
+              }
+
+              const paidAmount =
+                Math.round(
+                  (
+                    day.paidAmount +
+                    params.amountReceived +
+                    Number.EPSILON
+                  ) * 100
+                ) / 100;
+
+              let status =
+                day.status;
+
+              if (
+                paidAmount >=
+                  day.expectedAmount &&
+                day.expectedAmount > 0
+              ) {
+                status =
+                  paidAmount >
+                  day.expectedAmount
+                    ? 'surplus'
+                    : 'paid';
+              } else if (
+                paidAmount > 0
+              ) {
+                status =
+                  'partial';
+              }
+
+              return {
+                ...day,
+                paidAmount,
+                status
+              };
+            }
+          );
+
+        const hasOverdue =
+          updatedSchedule.some(
+            day =>
+              day.status ===
+              'overdue'
+          );
+
+        newLoanStatus =
+          hasOverdue
+            ? 'overdue'
+            : 'active';
+      }
+
+      const updatedLoan =
+        await SupabaseStorage.updateLoan(
+          loan.id,
+          {
+            totalPaid:
+              newTotalPaid,
+            capitalRecovered:
+              newCapitalRecovered,
+            profitRecovered:
+              newProfitRecovered,
+            balancePending:
+              newBalancePending,
+            status:
+              newLoanStatus,
+            liquidatedAt:
+              newLoanStatus ===
+              'liquidated'
+                ? timestamp
+                : loan.liquidatedAt
+          }
+        );
+
+      /* -----------------------------------------
+         ACTUALIZAR ESTADO LOCAL
+      ----------------------------------------- */
+
+      setLoans(prev =>
+        prev.map(item =>
+          item.id === loan.id
+            ? updatedLoan
+            : item
+        )
+      );
+
+      setTransactions(prev => [
+        newTransaction,
+        ...prev
+      ]);
+
+      /* -----------------------------------------
+         ACTUALIZAR RATING
+      ----------------------------------------- */
+
+      const updatedTransactions = [
+        newTransaction,
+        ...transactions
+      ];
+
+      const ratedClients =
+        refreshClientRatings(
+          clients,
+          loans.map(item =>
+            item.id === loan.id
+              ? updatedLoan
+              : item
+          ),
+          updatedTransactions
+        );
+
+      setClients(ratedClients);
+
+      showToast(
+        `Pago de $${params.amountReceived.toLocaleString(
+          'es-MX'
+        )} registrado con éxito.`
+      );
+
+      return true;
+    } catch (error: any) {
+      console.error(
+        'Error registrando pago:',
+        error
+      );
+
+      showToast(
+        error?.message ||
+          'No se pudo registrar el pago.',
+        'error'
+      );
+
+      return false;
     }
-
-    const updatedLoan: Loan = {
-      ...loan,
-      totalPaid: newTotalPaid,
-      capitalRecovered: newCapRecovered,
-      profitRecovered: newProfRecovered,
-      balancePending: newBalancePending,
-      status: newLoanStatus,
-      liquidatedAt: newLoanStatus === 'liquidated' ? today : loan.liquidatedAt,
-      schedule: updatedSchedule
-    };
-
-    const updatedLoans = loans.map(l => l.id === loan.id ? updatedLoan : l);
-    const updatedTxns = [newTxn, ...transactions];
-
-    setLoans(updatedLoans);
-    setTransactions(updatedTxns);
-
-    StorageService.saveLoans(updatedLoans);
-    StorageService.saveTransactions(updatedTxns);
-
-    // Refresh rating
-    const ratedClients = refreshClientRatings(clients, updatedLoans, updatedTxns);
-    setClients(ratedClients);
-    StorageService.saveClients(ratedClients);
-
-    showToast(`Pago de $${params.amountReceived.toLocaleString('es-MX')} registrado con éxito.`);
-    return true;
   };
 
-  const updateSettings = (newSettings: Partial<AppSettings>) => {
-    const updated = { ...settings, ...newSettings };
-    setSettings(updated);
-    StorageService.saveSettings(updated);
-    showToast('Configuración guardada.');
+  /* =========================================================
+     SETTINGS
+  ========================================================= */
+
+  const updateSettings = async (
+    newSettings: Partial<AppSettings>
+  ): Promise<void> => {
+    try {
+      const updatedSettings = {
+        ...settings,
+        ...newSettings
+      };
+
+      const savedSettings =
+        await SupabaseStorage.saveSettings(
+          updatedSettings
+        );
+
+      setSettings(savedSettings);
+
+      showToast(
+        'Configuración guardada.'
+      );
+    } catch (error: any) {
+      console.error(
+        'Error guardando configuración:',
+        error
+      );
+
+      showToast(
+        error?.message ||
+          'No se pudo guardar la configuración.',
+        'error'
+      );
+
+      throw error;
+    }
   };
+
+  /* =========================================================
+     SIGN UP
+  ========================================================= */
 
   const signUp = async (
     name: string,
     email: string,
     pass: string
-  ): Promise<{ success: boolean; requiresConfirmation?: boolean; error?: string }> => {
+  ): Promise<{
+    success: boolean;
+    requiresConfirmation?: boolean;
+    error?: string;
+  }> => {
     try {
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password: pass,
-        options: {
-          data: {
-            full_name: name,
-            name: name
+      const {
+        data,
+        error
+      } =
+        await supabase.auth.signUp({
+          email,
+          password: pass,
+          options: {
+            data: {
+              full_name: name,
+              name
+            }
           }
-        }
-      });
+        });
 
       if (error) {
-        let errorMessage = error.message;
-        if (error.message.includes('User already registered') || error.message.includes('already exists')) {
-          errorMessage = 'Este correo electrónico ya se encuentra registrado.';
-        } else if (error.message.includes('Password should be')) {
-          errorMessage = 'La contraseña debe tener al menos 6 caracteres.';
-        } else if (error.message.includes('invalid email')) {
-          errorMessage = 'El formato del correo electrónico no es válido.';
+        let errorMessage =
+          error.message;
+
+        if (
+          error.message.includes(
+            'User already registered'
+          ) ||
+          error.message.includes(
+            'already exists'
+          )
+        ) {
+          errorMessage =
+            'Este correo electrónico ya se encuentra registrado.';
+        } else if (
+          error.message.includes(
+            'Password should be'
+          )
+        ) {
+          errorMessage =
+            'La contraseña debe tener al menos 6 caracteres.';
+        } else if (
+          error.message.includes(
+            'invalid email'
+          )
+        ) {
+          errorMessage =
+            'El formato del correo electrónico no es válido.';
         }
-        showToast(errorMessage, 'error');
-        return { success: false, error: errorMessage };
+
+        showToast(
+          errorMessage,
+          'error'
+        );
+
+        return {
+          success: false,
+          error: errorMessage
+        };
       }
 
-      if (data.user && !data.session) {
-        showToast('Registro exitoso. Revisa tu correo electrónico para confirmar tu cuenta.', 'info');
-        return { success: true, requiresConfirmation: true };
+      if (
+        data.user &&
+        !data.session
+      ) {
+        showToast(
+          'Registro exitoso. Revisa tu correo electrónico para confirmar tu cuenta.',
+          'info'
+        );
+
+        return {
+          success: true,
+          requiresConfirmation: true
+        };
       }
 
-      showToast('Cuenta creada e inicio de sesión exitoso.');
-      return { success: true };
-    } catch (err: any) {
-      const errorMessage = err?.message || 'Error durante el registro.';
-      showToast(errorMessage, 'error');
-      return { success: false, error: errorMessage };
+      showToast(
+        'Cuenta creada e inicio de sesión exitoso.'
+      );
+
+      return {
+        success: true
+      };
+    } catch (error: any) {
+      const errorMessage =
+        error?.message ||
+        'Error durante el registro.';
+
+      showToast(
+        errorMessage,
+        'error'
+      );
+
+      return {
+        success: false,
+        error: errorMessage
+      };
     }
   };
 
-  const login = async (email: string, pass: string): Promise<{ success: boolean; error?: string }> => {
+  /* =========================================================
+     LOGIN
+  ========================================================= */
+
+  const login = async (
+    email: string,
+    pass: string
+  ): Promise<{
+    success: boolean;
+    error?: string;
+  }> => {
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password: pass
-      });
+      const {
+        data,
+        error
+      } =
+        await supabase.auth.signInWithPassword(
+          {
+            email,
+            password: pass
+          }
+        );
 
       if (error) {
-        let errorMessage = 'Error al iniciar sesión.';
-        if (error.message.includes('Invalid login credentials')) {
-          errorMessage = 'Correo electrónico o contraseña incorrectos.';
-        } else if (error.message.includes('Email not confirmed')) {
-          errorMessage = 'Tu correo electrónico aún no ha sido confirmado. Revisa tu bandeja de entrada.';
+        let errorMessage =
+          'Error al iniciar sesión.';
+
+        if (
+          error.message.includes(
+            'Invalid login credentials'
+          )
+        ) {
+          errorMessage =
+            'Correo electrónico o contraseña incorrectos.';
+        } else if (
+          error.message.includes(
+            'Email not confirmed'
+          )
+        ) {
+          errorMessage =
+            'Tu correo electrónico aún no ha sido confirmado. Revisa tu bandeja de entrada.';
         } else {
-          errorMessage = error.message;
+          errorMessage =
+            error.message;
         }
-        showToast(errorMessage, 'error');
-        return { success: false, error: errorMessage };
+
+        showToast(
+          errorMessage,
+          'error'
+        );
+
+        return {
+          success: false,
+          error: errorMessage
+        };
       }
 
-      showToast('Sesión iniciada correctamente.');
-      return { success: true };
-    } catch (err: any) {
-      const errorMessage = err?.message || 'Error al iniciar sesión.';
-      showToast(errorMessage, 'error');
-      return { success: false, error: errorMessage };
+      if (data.user) {
+        const name =
+          data.user.user_metadata?.full_name ||
+          data.user.user_metadata?.name ||
+          data.user.email?.split('@')[0] ||
+          'Administrador';
+
+        setAdminUser({
+          email:
+            data.user.email || '',
+          name
+        });
+      }
+
+      showToast(
+        'Sesión iniciada correctamente.'
+      );
+
+      return {
+        success: true
+      };
+    } catch (error: any) {
+      const errorMessage =
+        error?.message ||
+        'Error al iniciar sesión.';
+
+      showToast(
+        errorMessage,
+        'error'
+      );
+
+      return {
+        success: false,
+        error: errorMessage
+      };
     }
   };
+
+  /* =========================================================
+     LOGOUT
+  ========================================================= */
 
   const logout = async (): Promise<void> => {
     try {
       await supabase.auth.signOut();
-    } catch (err) {
-      console.error('Error al cerrar sesión:', err);
+
+      setClients([]);
+      setLoans([]);
+      setTransactions([]);
+
+      setSelectedClientId(null);
+      setRegisterPaymentModalLoan(null);
+      setViewingDocument(null);
+    } catch (error) {
+      console.error(
+        'Error al cerrar sesión:',
+        error
+      );
     } finally {
       setIsLoggedIn(false);
-      showToast('Sesión cerrada.', 'info');
+
+      showToast(
+        'Sesión cerrada.',
+        'info'
+      );
     }
   };
 
-  const resetDataToDemo = () => {
-    StorageService.clearAllData();
-    setClients([]);
-    setLoans([]);
-    setTransactions([]);
-    setSelectedClientId(null);
-    showToast('Todos los datos han sido eliminados correctamente.', 'info');
-  };
+  /* =========================================================
+     DELETE ALL USER DATA
+  ========================================================= */
+
+  const resetDataToDemo =
+    async (): Promise<void> => {
+      try {
+        await SupabaseStorage.clearAllData();
+
+        setClients([]);
+        setLoans([]);
+        setTransactions([]);
+        setSelectedClientId(null);
+        setViewingDocument(null);
+        setRegisterPaymentModalLoan(null);
+
+        showToast(
+          'Todos los datos han sido eliminados correctamente.',
+          'info'
+        );
+      } catch (error: any) {
+        console.error(
+          'Error eliminando datos:',
+          error
+        );
+
+        showToast(
+          error?.message ||
+            'No se pudieron eliminar los datos.',
+          'error'
+        );
+      }
+    };
+
+  /* =========================================================
+     BACKUP
+  ========================================================= */
 
   const exportBackupJSON = () => {
-    const jsonStr = StorageService.exportDataJSON();
-    const blob = new Blob([jsonStr], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    const backup = {
+      clients,
+      loans,
+      transactions,
+      settings,
+      exportedAt:
+        new Date().toISOString()
+    };
+
+    const jsonStr =
+      JSON.stringify(
+        backup,
+        null,
+        2
+      );
+
+    const blob = new Blob(
+      [jsonStr],
+      {
+        type: 'application/json'
+      }
+    );
+
+    const url =
+      URL.createObjectURL(blob);
+
+    const a =
+      document.createElement('a');
+
     a.href = url;
-    a.download = `backup_prestamos_${getTodayFormatted()}.json`;
+
+    a.download =
+      `backup_prestamos_${getTodayFormatted()}.json`;
+
     a.click();
+
     URL.revokeObjectURL(url);
-    showToast('Respaldo descargado exitosamente.');
+
+    showToast(
+      'Respaldo descargado exitosamente.'
+    );
   };
 
-  const importBackupJSON = (jsonStr: string): boolean => {
-    const success = StorageService.importDataJSON(jsonStr);
-    if (success) {
-      setClients(StorageService.getClients());
-      setLoans(StorageService.getLoans());
-      setTransactions(StorageService.getTransactions());
-      setSettings(StorageService.getSettings());
-      showToast('Respaldo importado correctamente.');
+  const importBackupJSON = (
+    jsonStr: string
+  ): boolean => {
+    try {
+      const data =
+        JSON.parse(jsonStr);
+
+      if (
+        data.clients &&
+        Array.isArray(data.clients)
+      ) {
+        setClients(data.clients);
+      }
+
+      if (
+        data.loans &&
+        Array.isArray(data.loans)
+      ) {
+        setLoans(data.loans);
+      }
+
+      if (
+        data.transactions &&
+        Array.isArray(
+          data.transactions
+        )
+      ) {
+        setTransactions(
+          data.transactions
+        );
+      }
+
+      if (data.settings) {
+        setSettings(data.settings);
+      }
+
+      showToast(
+        'Respaldo importado correctamente.'
+      );
+
       return true;
+    } catch (error) {
+      console.error(
+        'Error importando respaldo:',
+        error
+      );
+
+      showToast(
+        'Error al importar el archivo de respaldo.',
+        'error'
+      );
+
+      return false;
     }
-    showToast('Error al importar el archivo de respaldo.', 'error');
-    return false;
   };
+
+  /* =========================================================
+     CONTEXT
+  ========================================================= */
 
   return (
     <AppContext.Provider
       value={{
         activeTab,
         setActiveTab,
+
         selectedClientId,
         setSelectedClientId,
+
         clients,
         loans,
         transactions,
         settings,
         adminUser,
+
         isLoggedIn,
         isAuthLoading,
+
         searchQuery,
         setSearchQuery,
+
         filterStatus,
         setFilterStatus,
+
         isNewClientModalOpen,
         setIsNewClientModalOpen,
+
         isNewLoanModalOpen,
         setIsNewLoanModalOpen,
+
         loanClientPreselectId,
         setLoanClientPreselectId,
+
         registerPaymentModalLoan,
         setRegisterPaymentModalLoan,
+
         viewingDocument,
         setViewingDocument,
+
         toast,
         showToast,
+
         addClient,
         updateClient,
         deleteClient,
+
         uploadClientDocument,
         deleteClientDocument,
+
         createLoan,
         cancelLoan,
+
         registerPayment,
+
         updateSettings,
+
         signUp,
         login,
         logout,
+
         resetDataToDemo,
+
         exportBackupJSON,
         importBackupJSON
       }}
@@ -688,9 +1705,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 };
 
 export const useApp = () => {
-  const context = useContext(AppContext);
+  const context =
+    useContext(AppContext);
+
   if (!context) {
-    throw new Error('useApp must be used within an AppProvider');
+    throw new Error(
+      'useApp must be used within an AppProvider'
+    );
   }
+
   return context;
 };

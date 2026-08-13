@@ -431,6 +431,43 @@ export const SupabaseStorage = {
   },
 
   /* =========================
+     DELETE LOAN
+  ========================= */
+
+  async deleteLoan(loanId: string): Promise<void> {
+    const userId = await getCurrentUserId();
+
+    /*
+      El orden importa porque payments y loan_schedule
+      dependen del préstamo.
+    */
+
+    const { error: paymentsError } = await supabase
+      .from('payments')
+      .delete()
+      .eq('loan_id', loanId)
+      .eq('user_id', userId);
+
+    if (paymentsError) throw paymentsError;
+
+    const { error: scheduleError } = await supabase
+      .from('loan_schedule')
+      .delete()
+      .eq('loan_id', loanId)
+      .eq('user_id', userId);
+
+    if (scheduleError) throw scheduleError;
+
+    const { error: loanError } = await supabase
+      .from('loans')
+      .delete()
+      .eq('id', loanId)
+      .eq('user_id', userId);
+
+    if (loanError) throw loanError;
+  },
+
+  /* =========================
      PAYMENTS
   ========================= */
 
