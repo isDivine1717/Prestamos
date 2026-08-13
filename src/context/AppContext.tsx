@@ -406,13 +406,13 @@ export const AppProvider: React.FC<{
         setSettings(loadedSettings);
       } catch (error: any) {
         console.error(
-          'Error cargando datos desde Supabase:',
+          'Error cargando datos desde la base de datos:',
           error
         );
 
         showToast(
           error?.message ||
-            'No se pudieron cargar los datos.',
+            'Error al cargar la información desde la base de datos.',
           'error'
         );
       }

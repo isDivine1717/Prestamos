@@ -205,6 +205,57 @@ function mapPaymentFromDb(row: any): PaymentTransaction {
   };
 }
 
+async function fetchLoanById(loanId: string, userId: string): Promise<Loan> {
+  const { data, error } = await supabase
+    .from('loans')
+    .select(`
+      *,
+      clients (
+        first_name,
+        last_name
+      ),
+      loan_schedule (*)
+    `)
+    .eq('id', loanId)
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (!error && data) {
+    return mapLoanFromDb(data);
+  }
+
+  if (error && error.code !== 'PGRST200') {
+    throw error;
+  }
+
+  const { data: loanRow, error: loanErr } = await supabase
+    .from('loans')
+    .select('*')
+    .eq('id', loanId)
+    .eq('user_id', userId)
+    .single();
+
+  if (loanErr) throw loanErr;
+
+  const { data: clientRow } = await supabase
+    .from('clients')
+    .select('first_name, last_name')
+    .eq('id', loanRow.client_id)
+    .maybeSingle();
+
+  const { data: scheduleRows } = await supabase
+    .from('loan_schedule')
+    .select('*')
+    .eq('loan_id', loanId)
+    .eq('user_id', userId);
+
+  return mapLoanFromDb({
+    ...loanRow,
+    clients: clientRow ? [clientRow] : [],
+    loan_schedule: scheduleRows || [],
+  });
+}
+
 /* =========================================================
    STORAGE SERVICE
 ========================================================= */
@@ -220,21 +271,41 @@ export const SupabaseStorage = {
       return StorageService.getClients();
     }
 
-    try {
-      const userId = await getCurrentUserId();
+    const userId = await getCurrentUserId();
 
-      const { data, error } = await supabase
-        .from('clients')
-        .select('*')
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false });
+    const { data: clientsData, error: clientsError } = await supabase
+      .from('clients')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
 
-      if (error) throw error;
+    if (clientsError) throw clientsError;
 
-      return (data ?? []).map(mapClientFromDb);
-    } catch {
-      return StorageService.getClients();
+    const { data: docsData, error: docsError } = await supabase
+      .from('client_documents')
+      .select('*')
+      .eq('user_id', userId);
+
+    if (docsError) {
+      console.warn('Error al obtener client_documents de Supabase:', docsError);
     }
+
+    const docsByClientId: Record<string, any[]> = {};
+    if (docsData) {
+      for (const doc of docsData) {
+        if (!docsByClientId[doc.client_id]) {
+          docsByClientId[doc.client_id] = [];
+        }
+        docsByClientId[doc.client_id].push(doc);
+      }
+    }
+
+    return (clientsData ?? []).map(clientRow =>
+      mapClientFromDb({
+        ...clientRow,
+        client_documents: docsByClientId[clientRow.id] || [],
+      })
+    );
   },
 
   async createClient(
@@ -253,42 +324,32 @@ export const SupabaseStorage = {
       return newClient;
     }
 
-    try {
-      const userId = await getCurrentUserId();
+    const userId = await getCurrentUserId();
 
-      const payload = {
-        user_id: userId,
-        first_name: clientData.firstName,
-        last_name: clientData.lastName,
-        phone: clientData.phone ?? '',
-        address: clientData.address ?? '',
-        references_text: clientData.references ?? '',
-        notes: clientData.notes ?? '',
-        status: clientData.status ?? 'active',
-        rating: 'buen_pagador',
-      };
+    const payload = {
+      user_id: userId,
+      first_name: clientData.firstName,
+      last_name: clientData.lastName,
+      phone: clientData.phone ?? '',
+      address: clientData.address ?? '',
+      references_text: clientData.references ?? '',
+      notes: clientData.notes ?? '',
+      status: clientData.status ?? 'active',
+      rating: 'buen_pagador',
+    };
 
-      const { data, error } = await supabase
-        .from('clients')
-        .insert(payload)
-        .select('*')
-        .single();
+    const { data, error } = await supabase
+      .from('clients')
+      .insert(payload)
+      .select('*')
+      .single();
 
-      if (error) throw error;
+    if (error) throw error;
 
-      return mapClientFromDb(data);
-    } catch {
-      const newClient: Client = {
-        id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),
-        ...clientData,
-        createdAt: new Date().toISOString(),
-        rating: 'buen_pagador',
-        documents: [],
-      };
-      const clients = StorageService.getClients();
-      StorageService.saveClients([newClient, ...clients]);
-      return newClient;
-    }
+    return mapClientFromDb({
+      ...data,
+      client_documents: [],
+    });
   },
 
   async updateClient(
@@ -310,39 +371,33 @@ export const SupabaseStorage = {
       return updated;
     }
 
-    try {
-      const userId = await getCurrentUserId();
+    const userId = await getCurrentUserId();
 
-      const payload = mapClientToDb(clientData, userId);
+    const payload = mapClientToDb(clientData, userId);
 
-      delete (payload as any).id;
-      delete (payload as any).user_id;
+    delete (payload as any).id;
+    delete (payload as any).user_id;
 
-      const { data, error } = await supabase
-        .from('clients')
-        .update(payload)
-        .eq('id', id)
-        .eq('user_id', userId)
-        .select('*')
-        .single();
+    const { data, error } = await supabase
+      .from('clients')
+      .update(payload)
+      .eq('id', id)
+      .eq('user_id', userId)
+      .select('*')
+      .single();
 
-      if (error) throw error;
+    if (error) throw error;
 
-      return mapClientFromDb(data);
-    } catch {
-      const clients = StorageService.getClients();
-      let updated: Client | null = null;
-      const nextClients = clients.map(c => {
-        if (c.id === id) {
-          updated = { ...c, ...clientData };
-          return updated;
-        }
-        return c;
-      });
-      StorageService.saveClients(nextClients);
-      if (!updated) throw new Error('Cliente no encontrado');
-      return updated;
-    }
+    const { data: docsData } = await supabase
+      .from('client_documents')
+      .select('*')
+      .eq('client_id', id)
+      .eq('user_id', userId);
+
+    return mapClientFromDb({
+      ...data,
+      client_documents: docsData || [],
+    });
   },
 
   async deleteClient(id: string): Promise<void> {
@@ -356,24 +411,15 @@ export const SupabaseStorage = {
       return;
     }
 
-    try {
-      const userId = await getCurrentUserId();
+    const userId = await getCurrentUserId();
 
-      const { error } = await supabase
-        .from('clients')
-        .delete()
-        .eq('id', id)
-        .eq('user_id', userId);
+    const { error } = await supabase
+      .from('clients')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', userId);
 
-      if (error) throw error;
-    } catch {
-      const clients = StorageService.getClients().filter(c => c.id !== id);
-      StorageService.saveClients(clients);
-      const loans = StorageService.getLoans().filter(l => l.clientId !== id);
-      StorageService.saveLoans(loans);
-      const txns = StorageService.getTransactions().filter(t => t.clientId !== id);
-      StorageService.saveTransactions(txns);
-    }
+    if (error) throw error;
   },
 
   /* =========================
@@ -386,23 +432,25 @@ export const SupabaseStorage = {
     type: DocumentType,
     file: File
   ): Promise<ClientDocument> {
-    const fileUrl = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-
-    const doc: ClientDocument = {
-      id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),
-      clientId,
-      title,
-      type,
-      fileUrl,
-      uploadedAt: new Date().toISOString(),
-    };
+    const docId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : String(Date.now());
 
     if (!isSupabaseConfigured) {
+      const fileUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+      const doc: ClientDocument = {
+        id: docId,
+        clientId,
+        title,
+        type,
+        fileUrl,
+        uploadedAt: new Date().toISOString(),
+      };
+
       const clients = StorageService.getClients();
       const nextClients = clients.map(c => {
         if (c.id === clientId) {
@@ -417,33 +465,48 @@ export const SupabaseStorage = {
       return doc;
     }
 
-    try {
-      const userId = await getCurrentUserId();
-      await supabase.from('client_documents').insert({
-        id: doc.id,
-        user_id: userId,
-        client_id: clientId,
-        title,
-        type,
-        file_url: fileUrl,
-        uploaded_at: doc.uploadedAt,
+    const userId = await getCurrentUserId();
+    const sanitizeFileName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const storagePath = `${userId}/${clientId}/${docId}_${sanitizeFileName}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('client-documents')
+      .upload(storagePath, file, {
+        cacheControl: '3600',
+        upsert: true,
       });
-    } catch {
-      // Fallback local update
-      const clients = StorageService.getClients();
-      const nextClients = clients.map(c => {
-        if (c.id === clientId) {
-          return {
-            ...c,
-            documents: [doc, ...(c.documents || [])],
-          };
-        }
-        return c;
-      });
-      StorageService.saveClients(nextClients);
+
+    if (uploadError) {
+      throw new Error(`Error al subir archivo a Supabase Storage: ${uploadError.message}`);
     }
 
-    return doc;
+    const { data: urlData } = supabase.storage
+      .from('client-documents')
+      .getPublicUrl(storagePath);
+
+    const fileUrl = urlData?.publicUrl || storagePath;
+    const uploadedAt = new Date().toISOString();
+
+    const { error: dbError } = await supabase.from('client_documents').insert({
+      id: docId,
+      user_id: userId,
+      client_id: clientId,
+      title,
+      type,
+      file_url: fileUrl,
+      uploaded_at: uploadedAt,
+    });
+
+    if (dbError) throw dbError;
+
+    return {
+      id: docId,
+      clientId,
+      title,
+      type,
+      fileUrl,
+      uploadedAt,
+    };
   },
 
   async deleteClientDocument(clientId: string, documentId: string): Promise<void> {
@@ -462,26 +525,39 @@ export const SupabaseStorage = {
       return;
     }
 
-    try {
-      const userId = await getCurrentUserId();
-      await supabase
-        .from('client_documents')
-        .delete()
-        .eq('id', documentId)
-        .eq('user_id', userId);
-    } catch {
-      const clients = StorageService.getClients();
-      const nextClients = clients.map(c => {
-        if (c.id === clientId) {
-          return {
-            ...c,
-            documents: (c.documents || []).filter(d => d.id !== documentId),
-          };
+    const userId = await getCurrentUserId();
+
+    const { data: docData } = await supabase
+      .from('client_documents')
+      .select('file_url')
+      .eq('id', documentId)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (docData?.file_url) {
+      try {
+        const url = docData.file_url;
+        const bucketMarker = '/client-documents/';
+        if (url.includes(bucketMarker)) {
+          const filePath = url.split(bucketMarker)[1];
+          if (filePath) {
+            await supabase.storage
+              .from('client-documents')
+              .remove([decodeURIComponent(filePath)]);
+          }
         }
-        return c;
-      });
-      StorageService.saveClients(nextClients);
+      } catch (e) {
+        console.warn('No se pudo borrar el archivo de Supabase Storage:', e);
+      }
     }
+
+    const { error } = await supabase
+      .from('client_documents')
+      .delete()
+      .eq('id', documentId)
+      .eq('user_id', userId);
+
+    if (error) throw error;
   },
 
   /* =========================
@@ -493,28 +569,64 @@ export const SupabaseStorage = {
       return StorageService.getLoans();
     }
 
-    try {
-      const userId = await getCurrentUserId();
+    const userId = await getCurrentUserId();
 
-      const { data, error } = await supabase
-        .from('loans')
-        .select(`
-          *,
-          clients (
-            first_name,
-            last_name
-          ),
-          loan_schedule (*)
-        `)
-        .eq('user_id', userId)
-        .order('created_at', { ascending: false });
+    const { data, error } = await supabase
+      .from('loans')
+      .select(`
+        *,
+        clients (
+          first_name,
+          last_name
+        ),
+        loan_schedule (*)
+      `)
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
 
-      if (error) throw error;
-
+    if (!error) {
       return (data ?? []).map(mapLoanFromDb);
-    } catch {
-      return StorageService.getLoans();
     }
+
+    if (error.code !== 'PGRST200') {
+      throw error;
+    }
+
+    // Fallback if foreign key embedding fails due to missing schema relationships
+    const { data: loansData, error: loansErr } = await supabase
+      .from('loans')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (loansErr) throw loansErr;
+
+    const { data: clientsData } = await supabase
+      .from('clients')
+      .select('id, first_name, last_name')
+      .eq('user_id', userId);
+
+    const { data: scheduleData } = await supabase
+      .from('loan_schedule')
+      .select('*')
+      .eq('user_id', userId);
+
+    const clientMap = new Map((clientsData || []).map(c => [c.id, c]));
+    const scheduleMap = new Map<string, any[]>();
+    (scheduleData || []).forEach(s => {
+      if (!scheduleMap.has(s.loan_id)) {
+        scheduleMap.set(s.loan_id, []);
+      }
+      scheduleMap.get(s.loan_id)!.push(s);
+    });
+
+    return (loansData || []).map(loan =>
+      mapLoanFromDb({
+        ...loan,
+        clients: clientMap.get(loan.client_id) ? [clientMap.get(loan.client_id)] : [],
+        loan_schedule: scheduleMap.get(loan.id) || [],
+      })
+    );
   },
 
   async createLoan(
@@ -534,95 +646,59 @@ export const SupabaseStorage = {
       return newLoan;
     }
 
-    try {
-      const userId = await getCurrentUserId();
+    const userId = await getCurrentUserId();
 
-      const loanPayload = {
-        user_id: userId,
-        client_id: loanData.clientId,
-        start_date: loanData.startDate,
-        capital: loanData.capital,
-        profit_type: loanData.profitType,
-        profit_value: loanData.profitValue,
-        total_profit: loanData.totalProfit,
-        total_to_pay: loanData.totalToPay,
-        normal_days: loanData.normalDays,
-        grace_days: loanData.graceDays,
-        daily_payment: loanData.dailyPayment,
-        status: loanData.status,
-        capital_recovered: loanData.capitalRecovered,
-        profit_recovered: loanData.profitRecovered,
-        total_paid: loanData.totalPaid,
-        balance_pending: loanData.balancePending,
-        liquidated_at: loanData.liquidatedAt ?? null,
-        cancelled_at: loanData.cancelledAt ?? null,
-        cancellation_reason: loanData.cancellationReason ?? null,
-      };
+    const loanPayload = {
+      user_id: userId,
+      client_id: loanData.clientId,
+      start_date: loanData.startDate,
+      capital: loanData.capital,
+      profit_type: loanData.profitType,
+      profit_value: loanData.profitValue,
+      total_profit: loanData.totalProfit,
+      total_to_pay: loanData.totalToPay,
+      normal_days: loanData.normalDays,
+      grace_days: loanData.graceDays,
+      daily_payment: loanData.dailyPayment,
+      status: loanData.status,
+      capital_recovered: loanData.capitalRecovered,
+      profit_recovered: loanData.profitRecovered,
+      total_paid: loanData.totalPaid,
+      balance_pending: loanData.balancePending,
+      liquidated_at: loanData.liquidatedAt ?? null,
+      cancelled_at: loanData.cancelledAt ?? null,
+      cancellation_reason: loanData.cancellationReason ?? null,
+    };
 
-      const { data: loanRow, error: loanError } = await supabase
-        .from('loans')
-        .insert(loanPayload)
-        .select(`
-          *,
-          clients (
-            first_name,
-            last_name
-          )
-        `)
-        .single();
+    const { data: loanRow, error: loanError } = await supabase
+      .from('loans')
+      .insert(loanPayload)
+      .select('*')
+      .single();
 
-      if (loanError) throw loanError;
+    if (loanError) throw loanError;
 
-      if (loanData.schedule.length > 0) {
-        const schedulePayload = loanData.schedule.map(day =>
-          mapScheduleToDb(day, loanRow.id, userId)
-        );
+    if (loanData.schedule.length > 0) {
+      const schedulePayload = loanData.schedule.map(day =>
+        mapScheduleToDb(day, loanRow.id, userId)
+      );
 
-        const { error: scheduleError } = await supabase
-          .from('loan_schedule')
-          .insert(schedulePayload);
+      const { error: scheduleError } = await supabase
+        .from('loan_schedule')
+        .insert(schedulePayload);
 
-        if (scheduleError) {
-          await supabase
-            .from('loans')
-            .delete()
-            .eq('id', loanRow.id)
-            .eq('user_id', userId);
+      if (scheduleError) {
+        await supabase
+          .from('loans')
+          .delete()
+          .eq('id', loanRow.id)
+          .eq('user_id', userId);
 
-          throw scheduleError;
-        }
+        throw scheduleError;
       }
-
-      const { data: completeLoan, error: completeError } = await supabase
-        .from('loans')
-        .select(`
-          *,
-          clients (
-            first_name,
-            last_name
-          ),
-          loan_schedule (*)
-        `)
-        .eq('id', loanRow.id)
-        .eq('user_id', userId)
-        .single();
-
-      if (completeError) throw completeError;
-
-      return mapLoanFromDb(completeLoan);
-    } catch {
-      const clients = StorageService.getClients();
-      const client = clients.find(c => c.id === loanData.clientId);
-      const clientName = client ? `${client.firstName} ${client.lastName}`.trim() : 'Cliente';
-      const newLoan: Loan = {
-        id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),
-        clientName,
-        ...loanData,
-      };
-      const loans = StorageService.getLoans();
-      StorageService.saveLoans([newLoan, ...loans]);
-      return newLoan;
     }
+
+    return fetchLoanById(loanRow.id, userId);
   },
 
   async cancelLoan(
@@ -649,50 +725,21 @@ export const SupabaseStorage = {
       return updated;
     }
 
-    try {
-      const userId = await getCurrentUserId();
+    const userId = await getCurrentUserId();
 
-      const { data, error } = await supabase
-        .from('loans')
-        .update({
-          status: 'cancelled',
-          cancelled_at: new Date().toISOString(),
-          cancellation_reason: reason,
-        })
-        .eq('id', loanId)
-        .eq('user_id', userId)
-        .select(`
-          *,
-          clients (
-            first_name,
-            last_name
-          ),
-          loan_schedule (*)
-        `)
-        .single();
+    const { error } = await supabase
+      .from('loans')
+      .update({
+        status: 'cancelled',
+        cancelled_at: new Date().toISOString(),
+        cancellation_reason: reason,
+      })
+      .eq('id', loanId)
+      .eq('user_id', userId);
 
-      if (error) throw error;
+    if (error) throw error;
 
-      return mapLoanFromDb(data);
-    } catch {
-      const loans = StorageService.getLoans();
-      let updated: Loan | null = null;
-      const nextLoans = loans.map(l => {
-        if (l.id === loanId) {
-          updated = {
-            ...l,
-            status: 'cancelled' as const,
-            cancelledAt: new Date().toISOString(),
-            cancellationReason: reason,
-          };
-          return updated;
-        }
-        return l;
-      });
-      StorageService.saveLoans(nextLoans);
-      if (!updated) throw new Error('Préstamo no encontrado');
-      return updated;
-    }
+    return fetchLoanById(loanId, userId);
   },
 
   /* =========================
@@ -744,27 +791,49 @@ export const SupabaseStorage = {
       return StorageService.getTransactions();
     }
 
-    try {
-      const userId = await getCurrentUserId();
+    const userId = await getCurrentUserId();
 
-      const { data, error } = await supabase
-        .from('payments')
-        .select(`
-          *,
-          clients (
-            first_name,
-            last_name
-          )
-        `)
-        .eq('user_id', userId)
-        .order('timestamp', { ascending: false });
+    const { data, error } = await supabase
+      .from('payments')
+      .select(`
+        *,
+        clients (
+          first_name,
+          last_name
+        )
+      `)
+      .eq('user_id', userId)
+      .order('timestamp', { ascending: false });
 
-      if (error) throw error;
-
+    if (!error) {
       return (data ?? []).map(mapPaymentFromDb);
-    } catch {
-      return StorageService.getTransactions();
     }
+
+    if (error.code !== 'PGRST200') {
+      throw error;
+    }
+
+    const { data: pmtsData, error: pmtsErr } = await supabase
+      .from('payments')
+      .select('*')
+      .eq('user_id', userId)
+      .order('timestamp', { ascending: false });
+
+    if (pmtsErr) throw pmtsErr;
+
+    const { data: clientsData } = await supabase
+      .from('clients')
+      .select('id, first_name, last_name')
+      .eq('user_id', userId);
+
+    const clientMap = new Map((clientsData || []).map(c => [c.id, c]));
+
+    return (pmtsData || []).map(pmt =>
+      mapPaymentFromDb({
+        ...pmt,
+        clients: clientMap.get(pmt.client_id) ? [clientMap.get(pmt.client_id)] : [],
+      })
+    );
   },
 
   async createPayment(payment: {
@@ -796,54 +865,61 @@ export const SupabaseStorage = {
       return newTxn;
     }
 
-    try {
-      const userId = await getCurrentUserId();
+    const userId = await getCurrentUserId();
 
-      const payload = {
-        user_id: userId,
-        loan_id: payment.loanId,
-        client_id: payment.clientId,
-        payment_date: payment.paymentDate,
-        expected_amount: payment.expectedAmount,
-        amount_received: payment.amountReceived,
-        capital_portion: payment.capitalPortion,
-        profit_portion: payment.profitPortion,
-        difference: payment.difference,
-        payment_method: payment.paymentMethod,
-        note: payment.note ?? null,
-        day_number: payment.dayNumber ?? null,
-      };
+    const payload = {
+      user_id: userId,
+      loan_id: payment.loanId,
+      client_id: payment.clientId,
+      payment_date: payment.paymentDate,
+      expected_amount: payment.expectedAmount,
+      amount_received: payment.amountReceived,
+      capital_portion: payment.capitalPortion,
+      profit_portion: payment.profitPortion,
+      difference: payment.difference,
+      payment_method: payment.paymentMethod,
+      note: payment.note ?? null,
+      day_number: payment.dayNumber ?? null,
+    };
 
-      const { data, error } = await supabase
-        .from('payments')
-        .insert(payload)
-        .select(`
-          *,
-          clients (
-            first_name,
-            last_name
-          )
-        `)
-        .single();
+    const { data, error } = await supabase
+      .from('payments')
+      .insert(payload)
+      .select(`
+        *,
+        clients (
+          first_name,
+          last_name
+        )
+      `)
+      .single();
 
-      if (error) throw error;
-
+    if (!error && data) {
       return mapPaymentFromDb(data);
-    } catch {
-      const clients = StorageService.getClients();
-      const client = clients.find(c => c.id === payment.clientId);
-      const clientName = client ? `${client.firstName} ${client.lastName}`.trim() : 'Cliente';
-      const newTxn: PaymentTransaction = {
-        id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),
-        clientName,
-        timestamp: new Date().toISOString(),
-        date: payment.paymentDate,
-        ...payment,
-      };
-      const txns = StorageService.getTransactions();
-      StorageService.saveTransactions([newTxn, ...txns]);
-      return newTxn;
     }
+
+    if (error && error.code !== 'PGRST200') {
+      throw error;
+    }
+
+    const { data: pmtData, error: pmtErr } = await supabase
+      .from('payments')
+      .insert(payload)
+      .select('*')
+      .single();
+
+    if (pmtErr) throw pmtErr;
+
+    const { data: clientRow } = await supabase
+      .from('clients')
+      .select('first_name, last_name')
+      .eq('id', payment.clientId)
+      .maybeSingle();
+
+    return mapPaymentFromDb({
+      ...pmtData,
+      clients: clientRow ? [clientRow] : [],
+    });
   },
 
   /* =========================
@@ -880,42 +956,25 @@ export const SupabaseStorage = {
       return;
     }
 
-    try {
-      const userId = await getCurrentUserId();
+    const userId = await getCurrentUserId();
 
-      const payload = {
-        paid_amount: update.paidAmount,
-        status: update.status,
-        paid_at: update.paidAt ?? null,
-        payment_method: update.paymentMethod ?? null,
-        note: update.note ?? null,
-        transaction_id: update.transactionId ?? null,
-      };
+    const payload = {
+      paid_amount: update.paidAmount,
+      status: update.status,
+      paid_at: update.paidAt ?? null,
+      payment_method: update.paymentMethod ?? null,
+      note: update.note ?? null,
+      transaction_id: update.transactionId ?? null,
+    };
 
-      const { error } = await supabase
-        .from('loan_schedule')
-        .update(payload)
-        .eq('loan_id', loanId)
-        .eq('day_number', dayNumber)
-        .eq('user_id', userId);
+    const { error } = await supabase
+      .from('loan_schedule')
+      .update(payload)
+      .eq('loan_id', loanId)
+      .eq('day_number', dayNumber)
+      .eq('user_id', userId);
 
-      if (error) throw error;
-    } catch {
-      const loans = StorageService.getLoans();
-      const nextLoans = loans.map(l => {
-        if (l.id === loanId) {
-          const schedule = l.schedule.map(s => {
-            if (s.dayNumber === dayNumber) {
-              return { ...s, ...update };
-            }
-            return s;
-          });
-          return { ...l, schedule };
-        }
-        return l;
-      });
-      StorageService.saveLoans(nextLoans);
-    }
+    if (error) throw error;
   },
 
   /* =========================
@@ -953,70 +1012,43 @@ export const SupabaseStorage = {
       return updated;
     }
 
-    try {
-      const userId = await getCurrentUserId();
+    const userId = await getCurrentUserId();
 
-      const payload: Record<string, any> = {};
+    const payload: Record<string, any> = {};
 
-      if (updates.totalPaid !== undefined)
-        payload.total_paid = updates.totalPaid;
+    if (updates.totalPaid !== undefined)
+      payload.total_paid = updates.totalPaid;
 
-      if (updates.capitalRecovered !== undefined)
-        payload.capital_recovered = updates.capitalRecovered;
+    if (updates.capitalRecovered !== undefined)
+      payload.capital_recovered = updates.capitalRecovered;
 
-      if (updates.profitRecovered !== undefined)
-        payload.profit_recovered = updates.profitRecovered;
+    if (updates.profitRecovered !== undefined)
+      payload.profit_recovered = updates.profitRecovered;
 
-      if (updates.balancePending !== undefined)
-        payload.balance_pending = updates.balancePending;
+    if (updates.balancePending !== undefined)
+      payload.balance_pending = updates.balancePending;
 
-      if (updates.status !== undefined)
-        payload.status = updates.status;
+    if (updates.status !== undefined)
+      payload.status = updates.status;
 
-      if (updates.liquidatedAt !== undefined)
-        payload.liquidated_at = updates.liquidatedAt;
+    if (updates.liquidatedAt !== undefined)
+      payload.liquidated_at = updates.liquidatedAt;
 
-      if (updates.cancelledAt !== undefined)
-        payload.cancelled_at = updates.cancelledAt;
+    if (updates.cancelledAt !== undefined)
+      payload.cancelled_at = updates.cancelledAt;
 
-      if (updates.cancellationReason !== undefined)
-        payload.cancellation_reason = updates.cancellationReason;
+    if (updates.cancellationReason !== undefined)
+      payload.cancellation_reason = updates.cancellationReason;
 
-      const { data, error } = await supabase
-        .from('loans')
-        .update(payload)
-        .eq('id', loanId)
-        .eq('user_id', userId)
-        .select(`
-          *,
-          clients (
-            first_name,
-            last_name
-          ),
-          loan_schedule (*)
-        `)
-        .single();
+    const { error } = await supabase
+      .from('loans')
+      .update(payload)
+      .eq('id', loanId)
+      .eq('user_id', userId);
 
-      if (error) throw error;
+    if (error) throw error;
 
-      return mapLoanFromDb(data);
-    } catch {
-      const loans = StorageService.getLoans();
-      let updated: Loan | null = null;
-      const nextLoans = loans.map(l => {
-        if (l.id === loanId) {
-          const cleanUpdates = Object.fromEntries(
-            Object.entries(updates).filter(([_, v]) => v !== null)
-          );
-          updated = { ...l, ...cleanUpdates } as Loan;
-          return updated;
-        }
-        return l;
-      });
-      StorageService.saveLoans(nextLoans);
-      if (!updated) throw new Error('Préstamo no encontrado');
-      return updated;
-    }
+    return fetchLoanById(loanId, userId);
   },
 
   /* =========================
@@ -1028,36 +1060,32 @@ export const SupabaseStorage = {
       return StorageService.getSettings();
     }
 
-    try {
-      const userId = await getCurrentUserId();
+    const userId = await getCurrentUserId();
 
-      const { data, error } = await supabase
-        .from('app_settings')
-        .select('*')
-        .eq('user_id', userId)
-        .maybeSingle();
+    const { data, error } = await supabase
+      .from('app_settings')
+      .select('*')
+      .eq('user_id', userId)
+      .maybeSingle();
 
-      if (error) throw error;
+    if (error) throw error;
 
-      if (!data) {
-        return DEFAULT_SETTINGS;
-      }
-
-      return {
-        defaultNormalDays: data.default_normal_days,
-        defaultGraceDays: data.default_grace_days,
-        dailyCollectionEnabled: data.daily_collection_enabled,
-        chargeSundays: data.charge_sundays,
-        chargeHolidays: data.charge_holidays,
-        lateFeeEnabled: data.late_fee_enabled,
-        lateFeeType: data.late_fee_type,
-        lateFeeAmount: Number(data.late_fee_amount),
-        currencySymbol: data.currency_symbol,
-        currencyCode: data.currency_code,
-      };
-    } catch {
-      return StorageService.getSettings();
+    if (!data) {
+      return DEFAULT_SETTINGS;
     }
+
+    return {
+      defaultNormalDays: data.default_normal_days,
+      defaultGraceDays: data.default_grace_days,
+      dailyCollectionEnabled: data.daily_collection_enabled,
+      chargeSundays: data.charge_sundays,
+      chargeHolidays: data.charge_holidays,
+      lateFeeEnabled: data.late_fee_enabled,
+      lateFeeType: data.late_fee_type,
+      lateFeeAmount: Number(data.late_fee_amount),
+      currencySymbol: data.currency_symbol,
+      currencyCode: data.currency_code,
+    };
   },
 
   async saveSettings(settings: AppSettings): Promise<AppSettings> {
@@ -1066,47 +1094,42 @@ export const SupabaseStorage = {
       return settings;
     }
 
-    try {
-      const userId = await getCurrentUserId();
+    const userId = await getCurrentUserId();
 
-      const payload = {
-        user_id: userId,
-        default_normal_days: settings.defaultNormalDays,
-        default_grace_days: settings.defaultGraceDays,
-        daily_collection_enabled: settings.dailyCollectionEnabled,
-        charge_sundays: settings.chargeSundays,
-        charge_holidays: settings.chargeHolidays,
-        late_fee_enabled: settings.lateFeeEnabled,
-        late_fee_type: settings.lateFeeType,
-        late_fee_amount: settings.lateFeeAmount,
-        currency_symbol: settings.currencySymbol,
-        currency_code: settings.currencyCode,
-      };
+    const payload = {
+      user_id: userId,
+      default_normal_days: settings.defaultNormalDays,
+      default_grace_days: settings.defaultGraceDays,
+      daily_collection_enabled: settings.dailyCollectionEnabled,
+      charge_sundays: settings.chargeSundays,
+      charge_holidays: settings.chargeHolidays,
+      late_fee_enabled: settings.lateFeeEnabled,
+      late_fee_type: settings.lateFeeType,
+      late_fee_amount: settings.lateFeeAmount,
+      currency_symbol: settings.currencySymbol,
+      currency_code: settings.currencyCode,
+    };
 
-      const { data, error } = await supabase
-        .from('app_settings')
-        .upsert(payload, { onConflict: 'user_id' })
-        .select('*')
-        .single();
+    const { data, error } = await supabase
+      .from('app_settings')
+      .upsert(payload, { onConflict: 'user_id' })
+      .select('*')
+      .single();
 
-      if (error) throw error;
+    if (error) throw error;
 
-      return {
-        defaultNormalDays: data.default_normal_days,
-        defaultGraceDays: data.default_grace_days,
-        dailyCollectionEnabled: data.daily_collection_enabled,
-        chargeSundays: data.charge_sundays,
-        chargeHolidays: data.charge_holidays,
-        lateFeeEnabled: data.late_fee_enabled,
-        lateFeeType: data.late_fee_type,
-        lateFeeAmount: Number(data.late_fee_amount),
-        currencySymbol: data.currency_symbol,
-        currencyCode: data.currency_code,
-      };
-    } catch {
-      StorageService.saveSettings(settings);
-      return settings;
-    }
+    return {
+      defaultNormalDays: data.default_normal_days,
+      defaultGraceDays: data.default_grace_days,
+      dailyCollectionEnabled: data.daily_collection_enabled,
+      chargeSundays: data.charge_sundays,
+      chargeHolidays: data.charge_holidays,
+      lateFeeEnabled: data.late_fee_enabled,
+      lateFeeType: data.late_fee_type,
+      lateFeeAmount: Number(data.late_fee_amount),
+      currencySymbol: data.currency_symbol,
+      currencyCode: data.currency_code,
+    };
   },
 
   /* =========================
@@ -1119,38 +1142,41 @@ export const SupabaseStorage = {
       return;
     }
 
-    try {
-      const userId = await getCurrentUserId();
+    const userId = await getCurrentUserId();
 
-      const { error: paymentsError } = await supabase
-        .from('payments')
-        .delete()
-        .eq('user_id', userId);
+    const { error: paymentsError } = await supabase
+      .from('payments')
+      .delete()
+      .eq('user_id', userId);
 
-      if (paymentsError) throw paymentsError;
+    if (paymentsError) throw paymentsError;
 
-      const { error: scheduleError } = await supabase
-        .from('loan_schedule')
-        .delete()
-        .eq('user_id', userId);
+    const { error: scheduleError } = await supabase
+      .from('loan_schedule')
+      .delete()
+      .eq('user_id', userId);
 
-      if (scheduleError) throw scheduleError;
+    if (scheduleError) throw scheduleError;
 
-      const { error: loansError } = await supabase
-        .from('loans')
-        .delete()
-        .eq('user_id', userId);
+    const { error: loansError } = await supabase
+      .from('loans')
+      .delete()
+      .eq('user_id', userId);
 
-      if (loansError) throw loansError;
+    if (loansError) throw loansError;
 
-      const { error: clientsError } = await supabase
-        .from('clients')
-        .delete()
-        .eq('user_id', userId);
+    const { error: docsError } = await supabase
+      .from('client_documents')
+      .delete()
+      .eq('user_id', userId);
 
-      if (clientsError) throw clientsError;
-    } catch {
-      StorageService.clearAllData();
-    }
+    if (docsError) throw docsError;
+
+    const { error: clientsError } = await supabase
+      .from('clients')
+      .delete()
+      .eq('user_id', userId);
+
+    if (clientsError) throw clientsError;
   },
 };
