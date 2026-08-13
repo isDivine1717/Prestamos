@@ -15,7 +15,7 @@ import {
   PaymentMethod
 } from '../types';
 
-import { DEFAULT_ADMIN } from '../services/storage';
+import { DEFAULT_ADMIN, StorageService } from '../services/storage';
 import { SupabaseStorage } from '../services/supabaseStorage';
 
 import { getTodayFormatted } from '../utils/dates';
@@ -26,7 +26,7 @@ import {
   generateLoanSchedule
 } from '../utils/finance';
 
-import { supabase } from '../lib/supabase';
+import { isSupabaseConfigured, supabase } from '../lib/supabase';
 
 export type AppTab =
   | 'inicio'
@@ -133,6 +133,8 @@ interface AppContextType {
     loanId: string,
     reason: string
   ) => Promise<void>;
+
+  deleteLoan: (loanId: string) => Promise<boolean>;
 
   // PAGOS
   registerPayment: (params: {
@@ -284,6 +286,15 @@ export const AppProvider: React.FC<{
     let mounted = true;
 
     const initializeAuth = async () => {
+      if (!isSupabaseConfigured) {
+        if (mounted) {
+          const logged = StorageService.isLoggedIn();
+          setIsLoggedIn(logged);
+          setIsAuthLoading(false);
+        }
+        return;
+      }
+
       try {
         const {
           data: { session }
@@ -306,7 +317,7 @@ export const AppProvider: React.FC<{
             name
           });
         } else {
-          setIsLoggedIn(false);
+          setIsLoggedIn(StorageService.isLoggedIn());
         }
       } catch (error) {
         console.error(
@@ -315,7 +326,7 @@ export const AppProvider: React.FC<{
         );
 
         if (mounted) {
-          setIsLoggedIn(false);
+          setIsLoggedIn(StorageService.isLoggedIn());
         }
       } finally {
         if (mounted) {
@@ -868,6 +879,38 @@ export const AppProvider: React.FC<{
     }
   };
 
+  const deleteLoan = async (loanId: string): Promise<boolean> => {
+    try {
+      await SupabaseStorage.deleteLoan(loanId);
+
+      setLoans(prev => prev.filter(loan => loan.id !== loanId));
+
+      setTransactions(prev =>
+        prev.filter(transaction => transaction.loanId !== loanId)
+      );
+
+      if (
+        registerPaymentModalLoan &&
+        registerPaymentModalLoan.id === loanId
+      ) {
+        setRegisterPaymentModalLoan(null);
+      }
+
+      showToast('Préstamo eliminado correctamente.', 'success');
+
+      return true;
+    } catch (error: any) {
+      console.error('Error eliminando préstamo:', error);
+
+      showToast(
+        error?.message || 'No se pudo eliminar el préstamo.',
+        'error'
+      );
+
+      return false;
+    }
+  };
+
   /* =========================================================
      REGISTER PAYMENT
   ========================================================= */
@@ -1270,6 +1313,17 @@ export const AppProvider: React.FC<{
     requiresConfirmation?: boolean;
     error?: string;
   }> => {
+    if (!isSupabaseConfigured) {
+      StorageService.setLoggedIn(true);
+      setIsLoggedIn(true);
+      setAdminUser({
+        email,
+        name
+      });
+      showToast('Cuenta creada e inicio de sesión exitoso.');
+      return { success: true };
+    }
+
     try {
       const {
         data,
@@ -1377,6 +1431,17 @@ export const AppProvider: React.FC<{
     success: boolean;
     error?: string;
   }> => {
+    if (!isSupabaseConfigured) {
+      StorageService.setLoggedIn(true);
+      setIsLoggedIn(true);
+      setAdminUser({
+        email: email || 'admin@prestamos.mx',
+        name: email ? email.split('@')[0] : 'Administrador'
+      });
+      showToast('Sesión iniciada correctamente.');
+      return { success: true };
+    }
+
     try {
       const {
         data,
@@ -1467,7 +1532,17 @@ export const AppProvider: React.FC<{
 
   const logout = async (): Promise<void> => {
     try {
-      await supabase.auth.signOut();
+      if (isSupabaseConfigured) {
+        await supabase.auth.signOut();
+      }
+    } catch (error) {
+      console.error(
+        'Error al cerrar sesión:',
+        error
+      );
+    } finally {
+      StorageService.setLoggedIn(false);
+      setIsLoggedIn(false);
 
       setClients([]);
       setLoans([]);
@@ -1476,13 +1551,6 @@ export const AppProvider: React.FC<{
       setSelectedClientId(null);
       setRegisterPaymentModalLoan(null);
       setViewingDocument(null);
-    } catch (error) {
-      console.error(
-        'Error al cerrar sesión:',
-        error
-      );
-    } finally {
-      setIsLoggedIn(false);
 
       showToast(
         'Sesión cerrada.',
@@ -1684,6 +1752,7 @@ export const AppProvider: React.FC<{
 
         createLoan,
         cancelLoan,
+        deleteLoan,
 
         registerPayment,
 

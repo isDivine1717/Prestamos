@@ -5,6 +5,7 @@ import { formatCurrency, calculateClientRating } from '../utils/finance';
 import { formatDateLocale, formatDateTimeLocale, getDaysDifference, getTodayFormatted } from '../utils/dates';
 import { DeleteClientModal } from '../components/DeleteClientModal';
 import { StatementModal } from '../components/StatementModal';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import {
   User,
   Phone,
@@ -39,13 +40,15 @@ export const ExpedienteClientePage: React.FC = () => {
     setRegisterPaymentModalLoan,
     setIsNewLoanModalOpen,
     setLoanClientPreselectId,
-    setViewingDocument
+    setViewingDocument,
+    deleteLoan
   } = useApp();
 
   const [activeTab, setActiveTab] = useState<'resumen' | 'personal' | 'documentos' | 'prestamos' | 'historial'>('resumen');
   const [expandedLoanId, setExpandedLoanId] = useState<string | null>(null);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [selectedStatementLoan, setSelectedStatementLoan] = useState<Loan | null>(null);
+  const [loanToDelete, setLoanToDelete] = useState<Loan | null>(null);
 
   // Document Upload States
   const [docTitle, setDocTitle] = useState('');
@@ -458,6 +461,15 @@ export const ExpedienteClientePage: React.FC = () => {
                     </button>
 
                     <button
+                      onClick={() => setLoanToDelete(loan)}
+                      className="px-3.5 py-2 bg-red-950/40 hover:bg-red-900/70 border border-red-900/50 text-red-400 hover:text-red-200 font-bold text-xs rounded-xl flex items-center gap-1.5 cursor-pointer transition-colors"
+                      title="Eliminar este préstamo"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Eliminar préstamo</span>
+                    </button>
+
+                    <button
                       onClick={() => setExpandedLoanId(expandedLoanId === loan.id ? null : loan.id)}
                       className="p-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-xl transition-colors cursor-pointer"
                     >
@@ -542,6 +554,15 @@ export const ExpedienteClientePage: React.FC = () => {
                     <FileText className="w-3.5 h-3.5 text-[#22C55E]" />
                     <span>Generar estado de cuenta</span>
                   </button>
+
+                  <button
+                    onClick={() => setLoanToDelete(loan)}
+                    className="px-3 py-1.5 bg-red-950/40 hover:bg-red-900/70 border border-red-900/50 text-red-400 hover:text-red-200 font-bold text-xs rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors font-sans"
+                    title="Eliminar este préstamo"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Eliminar préstamo</span>
+                  </button>
                 </div>
               </div>
             ))}
@@ -568,6 +589,33 @@ export const ExpedienteClientePage: React.FC = () => {
         client={client}
         loan={selectedStatementLoan}
         onClose={() => setSelectedStatementLoan(null)}
+      />
+      {/* Delete Loan Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={!!loanToDelete}
+        title="¿Eliminar préstamo seleccionado?"
+        message={
+          loanToDelete
+            ? `¿Estás seguro de que deseas eliminar permanentemente el préstamo de ${formatCurrency(
+                loanToDelete.capital
+              )} (ID: ${loanToDelete.id})? Esta acción eliminará el calendario de pagos y las transacciones asociadas a este préstamo. NOTA: Esta acción NO eliminará al cliente (${client.firstName} ${client.lastName}).`
+            : ''
+        }
+        confirmText="Eliminar Préstamo"
+        cancelText="Cancelar"
+        isDanger={true}
+        onConfirm={async () => {
+          if (!loanToDelete) return;
+          const targetId = loanToDelete.id;
+          const success = await deleteLoan(targetId);
+          if (success) {
+            if (selectedStatementLoan?.id === targetId) {
+              setSelectedStatementLoan(null);
+            }
+            setLoanToDelete(null);
+          }
+        }}
+        onCancel={() => setLoanToDelete(null)}
       />
     </div>
   );
