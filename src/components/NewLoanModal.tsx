@@ -16,21 +16,32 @@ export const NewLoanModal: React.FC<Props> = ({ isOpen, onClose, preselectedClie
 
   const [selectedClientId, setSelectedClientId] = useState<string>('');
   const [capitalInput, setCapitalInput] = useState<string>('10000');
-  const [profitType, setProfitType] = useState<ProfitType>('fixed');
-  const [profitInput, setProfitInput] = useState<string>('2000');
-  const [normalDays, setNormalDays] = useState<number>(settings.defaultNormalDays || 60);
-  const [graceDays, setGraceDays] = useState<number>(settings.defaultGraceDays || 5);
+  const [profitType, setProfitType] = useState<ProfitType>('percentage');
+  const [profitInput, setProfitInput] = useState<string>('20');
+  const [normalDays, setNormalDays] = useState<number>(settings.defaultNormalDays ?? 65);
+  const [graceDays, setGraceDays] = useState<number>(settings.defaultGraceDays ?? 0);
   const [step, setStep] = useState<number>(1); // 1: Config, 2: Calendar & Confirm
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
 
   useEffect(() => {
-    if (preselectedClientId) {
-      setSelectedClientId(preselectedClientId);
-    } else if (clients.length > 0 && !selectedClientId) {
-      setSelectedClientId(clients[0].id);
+    if (isOpen) {
+      setNormalDays(settings.defaultNormalDays ?? 65);
+      setGraceDays(settings.defaultGraceDays ?? 0);
+      setCapitalInput('10000');
+      setProfitType('percentage');
+      setProfitInput('20');
+      setStep(1);
+      setErrorMessage('');
+      setIsSubmitting(false);
+
+      if (preselectedClientId) {
+        setSelectedClientId(preselectedClientId);
+      } else if (clients.length > 0) {
+        setSelectedClientId(clients[0].id);
+      }
     }
-  }, [preselectedClientId, clients]);
+  }, [isOpen, settings, preselectedClientId, clients]);
 
   if (!isOpen) return null;
 
@@ -38,9 +49,14 @@ export const NewLoanModal: React.FC<Props> = ({ isOpen, onClose, preselectedClie
   const profitValue = parseFloat(profitInput) || 0;
   const totalProfit = calculateProfit(capital, profitType, profitValue);
   const totalToPay = capital + totalProfit;
-  const dailyPayment = calculateDailyPayment(totalToPay, normalDays);
+  const dailyPayment = calculateDailyPayment(totalToPay, normalDays > 0 ? normalDays : 65);
 
-  const schedulePreview = generateLoanSchedule(getTodayFormatted(), totalToPay, normalDays, graceDays);
+  const schedulePreview = generateLoanSchedule(
+    getTodayFormatted(),
+    totalToPay,
+    normalDays > 0 ? normalDays : 65,
+    graceDays >= 0 ? graceDays : 0
+  );
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -56,6 +72,16 @@ export const NewLoanModal: React.FC<Props> = ({ isOpen, onClose, preselectedClie
       return;
     }
 
+    if (isNaN(normalDays) || normalDays < 1) {
+      setErrorMessage('Los días normales deben ser al menos 1 día.');
+      return;
+    }
+
+    if (isNaN(graceDays) || graceDays < 0) {
+      setErrorMessage('Los días de gracia no pueden ser negativos.');
+      return;
+    }
+
     if (isSubmitting) return;
 
     setIsSubmitting(true);
@@ -67,8 +93,8 @@ export const NewLoanModal: React.FC<Props> = ({ isOpen, onClose, preselectedClie
         profitType,
         profitValue,
         totalProfit,
-        normalDays,
-        graceDays
+        normalDays: Number(normalDays),
+        graceDays: Number(graceDays)
       });
 
       onClose();
@@ -80,6 +106,9 @@ export const NewLoanModal: React.FC<Props> = ({ isOpen, onClose, preselectedClie
   };
 
   const selectedClient = clients.find(c => c.id === selectedClientId);
+
+  const normalScheduleDays = schedulePreview.filter(d => !d.isGracePeriod);
+  const graceScheduleDays = schedulePreview.filter(d => d.isGracePeriod);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-sm animate-in fade-in overflow-hidden">
@@ -221,6 +250,73 @@ export const NewLoanModal: React.FC<Props> = ({ isOpen, onClose, preselectedClie
                 </div>
               </div>
 
+              {/* Term & Grace Days Configuration */}
+              <div className="p-4 bg-[#161616] rounded-xl border border-[#1F1F1F] space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase tracking-widest text-zinc-400 mb-1.5">
+                      Días Normales de Cobro *
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="365"
+                      required
+                      value={normalDays}
+                      onChange={(e) => setNormalDays(Number(e.target.value))}
+                      className="w-full bg-[#111111] border border-[#1F1F1F] rounded-lg px-3.5 py-2 text-xs font-bold text-white focus:outline-none focus:border-[#22C55E]"
+                    />
+                    <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                      {[65, 30, 60, 90].map((d) => (
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => setNormalDays(d)}
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold transition-colors cursor-pointer border ${
+                            normalDays === d
+                              ? 'bg-white text-black border-white'
+                              : 'bg-[#161616] border-[#1F1F1F] text-zinc-400 hover:text-white'
+                          }`}
+                        >
+                          {d} días {d === (settings.defaultNormalDays ?? 65) ? '(Predet.)' : ''}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold uppercase tracking-widest text-zinc-400 mb-1.5">
+                      Días de Gracia
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      max="60"
+                      required
+                      value={graceDays}
+                      onChange={(e) => setGraceDays(Number(e.target.value))}
+                      className="w-full bg-[#111111] border border-[#1F1F1F] rounded-lg px-3.5 py-2 text-xs font-bold text-white focus:outline-none focus:border-[#22C55E]"
+                    />
+                    <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                      {[0, 1, 3, 5, 10].map((g) => (
+                        <button
+                          key={g}
+                          type="button"
+                          onClick={() => setGraceDays(g)}
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold transition-colors cursor-pointer border ${
+                            graceDays === g
+                              ? 'bg-white text-black border-white'
+                              : 'bg-[#161616] border-[#1F1F1F] text-zinc-400 hover:text-white'
+                          }`}
+                        >
+                          {g} {g === 1 ? 'día' : 'días'} {g === (settings.defaultGraceDays ?? 0) ? '(Predet.)' : ''}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               {/* Calculated Summary Card */}
               <div className="p-4 bg-[#161616] border border-[#1F1F1F] rounded-xl space-y-2">
                 <div className="flex justify-between items-center text-xs">
@@ -236,8 +332,10 @@ export const NewLoanModal: React.FC<Props> = ({ isOpen, onClose, preselectedClie
                   <span className="text-lg text-[#22C55E]">{formatCurrency(totalToPay)}</span>
                 </div>
                 <div className="flex justify-between items-center text-xs pt-1">
-                  <span className="text-[10px] uppercase font-bold text-zinc-500">Duración:</span>
-                  <span className="text-zinc-300 font-medium">{normalDays} días normales + {graceDays} días de gracia</span>
+                  <span className="text-[10px] uppercase font-bold text-zinc-500">Plazo y Duración:</span>
+                  <span className="text-zinc-300 font-medium">
+                    {normalDays} días de pago{graceDays > 0 ? ` + ${graceDays} de gracia (${normalDays + graceDays} días totales)` : ' (sin días de gracia)'}
+                  </span>
                 </div>
                 <div className="flex justify-between items-center text-xs pt-1 text-[#22C55E] font-bold">
                   <span className="text-[10px] uppercase tracking-widest">Cuota Diaria Estimada:</span>
@@ -251,35 +349,57 @@ export const NewLoanModal: React.FC<Props> = ({ isOpen, onClose, preselectedClie
               <div className="space-y-4">
                 <div className="bg-[#161616] p-4 rounded-xl border border-[#1F1F1F] text-xs space-y-1">
                   <h4 className="font-bold text-sm text-white">{selectedClient?.firstName} {selectedClient?.lastName}</h4>
-                  <p className="text-zinc-400">Préstamo por <span className="text-[#22C55E] font-bold">{formatCurrency(totalToPay)}</span> ({formatCurrency(dailyPayment)} / día)</p>
+                  <p className="text-zinc-400">
+                    Préstamo por <span className="text-[#22C55E] font-bold">{formatCurrency(totalToPay)}</span> ({formatCurrency(dailyPayment)} / día por {normalDays} días{graceDays > 0 ? ` + ${graceDays} de gracia` : ''})
+                  </p>
                   <p className="text-zinc-500 text-[10px]">Cobranza diaria consecutiva.</p>
                 </div>
 
                 <div className="space-y-2">
-                  <h5 className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">Vista Previa del Calendario</h5>
-                  <div className="max-h-48 overflow-y-auto bg-[#161616] rounded-xl p-2 border border-[#1F1F1F] divide-y divide-[#1F1F1F] text-xs">
-                    {schedulePreview.slice(0, 5).map(day => (
-                      <div key={day.dayNumber} className="py-1.5 px-2 flex justify-between items-center text-zinc-300">
-                        <span>Día {day.dayNumber} ({day.date})</span>
-                        <span className="text-[#22C55E] font-bold">{formatCurrency(day.expectedAmount)}</span>
-                      </div>
-                    ))}
-                    <div className="py-1 text-center text-zinc-500 text-[10px]">... Días 6 al 59 ...</div>
-                    {schedulePreview.slice(55, 60).map(day => (
-                      <div key={day.dayNumber} className="py-1.5 px-2 flex justify-between items-center text-zinc-300">
-                        <span>Día {day.dayNumber} ({day.date})</span>
-                        <span className="text-[#22C55E] font-bold">{formatCurrency(day.expectedAmount)}</span>
-                      </div>
-                    ))}
-                    <div className="py-1 text-center text-[#F97316] font-bold text-[10px] bg-orange-950/30 my-1 rounded border border-orange-900/40 uppercase tracking-widest">
-                      PERÍODO DE GRACIA (DÍAS 61 - 65)
-                    </div>
-                    {schedulePreview.slice(60, 65).map(day => (
-                      <div key={day.dayNumber} className="py-1.5 px-2 flex justify-between items-center text-[#F97316]">
-                        <span>Día {day.dayNumber} ({day.date})</span>
-                        <span>Día de Gracia</span>
-                      </div>
-                    ))}
+                  <h5 className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">
+                    Vista Previa del Calendario ({schedulePreview.length} Días)
+                  </h5>
+                  <div className="max-h-56 overflow-y-auto bg-[#161616] rounded-xl p-2 border border-[#1F1F1F] divide-y divide-[#1F1F1F] text-xs">
+                    {normalScheduleDays.length <= 8 ? (
+                      normalScheduleDays.map(day => (
+                        <div key={day.dayNumber} className="py-1.5 px-2 flex justify-between items-center text-zinc-300">
+                          <span>Día {day.dayNumber} ({day.date})</span>
+                          <span className="text-[#22C55E] font-bold">{formatCurrency(day.expectedAmount)}</span>
+                        </div>
+                      ))
+                    ) : (
+                      <>
+                        {normalScheduleDays.slice(0, 4).map(day => (
+                          <div key={day.dayNumber} className="py-1.5 px-2 flex justify-between items-center text-zinc-300">
+                            <span>Día {day.dayNumber} ({day.date})</span>
+                            <span className="text-[#22C55E] font-bold">{formatCurrency(day.expectedAmount)}</span>
+                          </div>
+                        ))}
+                        <div className="py-1.5 text-center text-zinc-500 text-[10px]">
+                          ... Días 5 al {normalScheduleDays.length - 2} ({formatCurrency(dailyPayment)} / día) ...
+                        </div>
+                        {normalScheduleDays.slice(-2).map(day => (
+                          <div key={day.dayNumber} className="py-1.5 px-2 flex justify-between items-center text-zinc-300">
+                            <span>Día {day.dayNumber} ({day.date})</span>
+                            <span className="text-[#22C55E] font-bold">{formatCurrency(day.expectedAmount)}</span>
+                          </div>
+                        ))}
+                      </>
+                    )}
+
+                    {graceScheduleDays.length > 0 && (
+                      <>
+                        <div className="py-1 text-center text-[#F97316] font-bold text-[10px] bg-orange-950/30 my-1 rounded border border-orange-900/40 uppercase tracking-widest">
+                          PERÍODO DE GRACIA (DÍAS {normalDays + 1} AL {normalDays + graceDays})
+                        </div>
+                        {graceScheduleDays.map(day => (
+                          <div key={day.dayNumber} className="py-1.5 px-2 flex justify-between items-center text-[#F97316]">
+                            <span>Día {day.dayNumber} ({day.date})</span>
+                            <span>Día de Gracia ($0 cuota)</span>
+                          </div>
+                        ))}
+                      </>
+                    )}
                   </div>
                 </div>
               </div>

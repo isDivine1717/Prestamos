@@ -15,7 +15,7 @@ import {
   PaymentMethod
 } from '../types';
 
-import { DEFAULT_ADMIN, StorageService } from '../services/storage';
+import { DEFAULT_ADMIN, DEFAULT_SETTINGS, StorageService } from '../services/storage';
 import { SupabaseStorage } from '../services/supabaseStorage';
 
 import { getTodayFormatted } from '../utils/dates';
@@ -199,18 +199,7 @@ export const AppProvider: React.FC<{
     useState<PaymentTransaction[]>([]);
 
   const [settings, setSettings] =
-    useState<AppSettings>({
-      defaultNormalDays: 60,
-      defaultGraceDays: 5,
-      dailyCollectionEnabled: true,
-      chargeSundays: true,
-      chargeHolidays: true,
-      lateFeeEnabled: false,
-      lateFeeType: 'fixed',
-      lateFeeAmount: 50,
-      currencySymbol: '$',
-      currencyCode: 'MXN'
-    });
+    useState<AppSettings>(DEFAULT_SETTINGS);
 
   const [adminUser, setAdminUser] =
     useState<AdminUser>(DEFAULT_ADMIN);
@@ -362,6 +351,7 @@ export const AppProvider: React.FC<{
           setClients([]);
           setLoans([]);
           setTransactions([]);
+          setSettings(DEFAULT_SETTINGS);
         }
 
         setIsAuthLoading(false);
@@ -383,6 +373,7 @@ export const AppProvider: React.FC<{
       setClients([]);
       setLoans([]);
       setTransactions([]);
+      setSettings(DEFAULT_SETTINGS);
       return;
     }
 

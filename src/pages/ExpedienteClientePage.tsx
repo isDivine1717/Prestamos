@@ -495,7 +495,9 @@ export const ExpedienteClientePage: React.FC = () => {
                 {/* Expanded Schedule Calendar Drawer */}
                 {expandedLoanId === loan.id && (
                   <div className="pt-4 border-t border-zinc-800 space-y-3">
-                    <h4 className="text-xs font-bold uppercase tracking-wider text-zinc-400">Calendario del Préstamo (60 Días + 5 de Gracia)</h4>
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-zinc-400">
+                      Calendario del Préstamo ({loan.normalDays || 65} Días{loan.graceDays > 0 ? ` + ${loan.graceDays} de Gracia` : ''})
+                    </h4>
                     <div className="max-h-60 overflow-y-auto bg-zinc-950 rounded-xl p-3 border border-zinc-800 divide-y divide-zinc-800/60 font-mono text-xs">
                       {loan.schedule.map(day => (
                         <div key={day.dayNumber} className="py-2 px-2 flex justify-between items-center text-zinc-300">

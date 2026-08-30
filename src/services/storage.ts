@@ -11,8 +11,8 @@ const STORAGE_KEYS = {
 };
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  defaultNormalDays: 60,
-  defaultGraceDays: 5,
+  defaultNormalDays: 65,
+  defaultGraceDays: 0,
   dailyCollectionEnabled: true,
   chargeSundays: true,
   chargeHolidays: true,

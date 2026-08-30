@@ -36,9 +36,9 @@ export function calculateProfit(capital: number, profitType: ProfitType, profitV
 }
 
 /**
- * Calculates daily payment given total amount and normal days (default 60)
+ * Calculates daily payment given total amount and normal days (default 65)
  */
-export function calculateDailyPayment(totalToPay: number, normalDays: number = 60): number {
+export function calculateDailyPayment(totalToPay: number, normalDays: number = 65): number {
   if (normalDays <= 0) return totalToPay;
   const daily = totalToPay / normalDays;
   return Math.round((daily + Number.EPSILON) * 100) / 100;
@@ -59,13 +59,13 @@ export function calculatePaymentBreakdown(paymentAmount: number, capital: number
 }
 
 /**
- * Generates initial 65-day payment calendar schedule (60 normal + 5 grace days)
+ * Generates initial payment calendar schedule based on normal days and optional grace days
  */
 export function generateLoanSchedule(
   startDate: string,
   totalToPay: number,
-  normalDays: number = 60,
-  graceDays: number = 5
+  normalDays: number = 65,
+  graceDays: number = 0
 ): LoanScheduleDay[] {
   const dailyPayment = calculateDailyPayment(totalToPay, normalDays);
   const totalDays = normalDays + graceDays;

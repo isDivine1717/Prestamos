@@ -1,6 +1,6 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
-import { Settings, Save, Download, Upload, RotateCcw, ShieldCheck, DollarSign } from 'lucide-react';
+import { Settings, Save, Download, Upload, RotateCcw, ShieldCheck, DollarSign, Loader2 } from 'lucide-react';
 
 export const ConfiguracionPage: React.FC = () => {
   const {
@@ -13,23 +13,46 @@ export const ConfiguracionPage: React.FC = () => {
     logout
   } = useApp();
 
-  const [normalDays, setNormalDays] = useState(settings.defaultNormalDays);
-  const [graceDays, setGraceDays] = useState(settings.defaultGraceDays);
-  const [chargeSundays, setChargeSundays] = useState(settings.chargeSundays);
-  const [lateFeeEnabled, setLateFeeEnabled] = useState(settings.lateFeeEnabled);
-  const [lateFeeAmount, setLateFeeAmount] = useState(settings.lateFeeAmount);
+  const [normalDays, setNormalDays] = useState<number>(settings.defaultNormalDays ?? 65);
+  const [graceDays, setGraceDays] = useState<number>(settings.defaultGraceDays ?? 0);
+  const [chargeSundays, setChargeSundays] = useState<boolean>(settings.chargeSundays ?? true);
+  const [lateFeeEnabled, setLateFeeEnabled] = useState<boolean>(settings.lateFeeEnabled ?? false);
+  const [lateFeeAmount, setLateFeeAmount] = useState<number>(settings.lateFeeAmount ?? 50);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+
+  useEffect(() => {
+    setNormalDays(settings.defaultNormalDays ?? 65);
+    setGraceDays(settings.defaultGraceDays ?? 0);
+    setChargeSundays(settings.chargeSundays ?? true);
+    setLateFeeEnabled(settings.lateFeeEnabled ?? false);
+    setLateFeeAmount(settings.lateFeeAmount ?? 50);
+  }, [settings]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleSaveSettings = (e: React.FormEvent) => {
+  const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
-    updateSettings({
-      defaultNormalDays: normalDays,
-      defaultGraceDays: graceDays,
-      chargeSundays,
-      lateFeeEnabled,
-      lateFeeAmount
-    });
+    if (isNaN(normalDays) || normalDays < 1) {
+      return;
+    }
+    if (isNaN(graceDays) || graceDays < 0) {
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      await updateSettings({
+        defaultNormalDays: Number(normalDays),
+        defaultGraceDays: Number(graceDays),
+        chargeSundays: Boolean(chargeSundays),
+        lateFeeEnabled: Boolean(lateFeeEnabled),
+        lateFeeAmount: Number(lateFeeAmount)
+      });
+    } catch {
+      // Toast notification is handled in AppContext
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleImportFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -74,11 +97,12 @@ export const ConfiguracionPage: React.FC = () => {
               type="number"
               min="1"
               max="365"
+              required
               value={normalDays}
               onChange={(e) => setNormalDays(Number(e.target.value))}
               className="w-full bg-[#161616] border border-[#1F1F1F] rounded-lg px-3.5 py-2 text-xs text-white focus:outline-none focus:border-[#22C55E]"
             />
-            <p className="text-[10px] text-zinc-500 mt-1">Configuración estándar: 60 días para calcular cuota diaria.</p>
+            <p className="text-[10px] text-zinc-500 mt-1">Plazo base para calcular cuota diaria de nuevos préstamos (Predeterminado: 65 días).</p>
           </div>
 
           <div>
@@ -88,12 +112,13 @@ export const ConfiguracionPage: React.FC = () => {
             <input
               type="number"
               min="0"
-              max="30"
+              max="60"
+              required
               value={graceDays}
               onChange={(e) => setGraceDays(Number(e.target.value))}
               className="w-full bg-[#161616] border border-[#1F1F1F] rounded-lg px-3.5 py-2 text-xs text-white focus:outline-none focus:border-[#22C55E]"
             />
-            <p className="text-[10px] text-zinc-500 mt-1">Configuración estándar: 5 días finales sin marcar atraso definitivo.</p>
+            <p className="text-[10px] text-zinc-500 mt-1">Días adicionales al plazo normal sin generar atraso (Predeterminado: 0 días).</p>
           </div>
 
           <div className="sm:col-span-2 space-y-3 pt-2 border-t border-[#1F1F1F]">
@@ -136,10 +161,20 @@ export const ConfiguracionPage: React.FC = () => {
         <div className="pt-4 border-t border-[#1F1F1F] flex justify-end">
           <button
             type="submit"
-            className="px-5 py-2 bg-[#22C55E] hover:bg-green-400 text-black text-xs font-bold rounded transition-colors flex items-center gap-2 cursor-pointer uppercase tracking-wider"
+            disabled={isSaving}
+            className="px-5 py-2 bg-[#22C55E] hover:bg-green-400 disabled:opacity-50 text-black text-xs font-bold rounded transition-colors flex items-center gap-2 cursor-pointer uppercase tracking-wider shadow-lg shadow-green-950/40"
           >
-            <Save className="w-4 h-4" />
-            <span>Guardar Parámetros</span>
+            {isSaving ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Guardando...</span>
+              </>
+            ) : (
+              <>
+                <Save className="w-4 h-4" />
+                <span>Guardar Parámetros</span>
+              </>
+            )}
           </button>
         </div>
       </form>

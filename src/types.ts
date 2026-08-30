@@ -36,7 +36,7 @@ export type PaymentStatus = 'pending' | 'paid' | 'overdue' | 'partial' | 'surplu
 export type PaymentMethod = 'cash' | 'transfer' | 'deposit' | 'other';
 
 export interface LoanScheduleDay {
-  dayNumber: number; // 1 to 65
+  dayNumber: number; // 1 to totalDays
   date: string; // YYYY-MM-DD
   isGracePeriod: boolean;
   expectedAmount: number;
@@ -58,8 +58,8 @@ export interface Loan {
   profitValue: number; // Amount or percentage
   totalProfit: number;
   totalToPay: number; // capital + totalProfit
-  normalDays: number; // default 60
-  graceDays: number; // default 5
+  normalDays: number; // default 65
+  graceDays: number; // default 0
   dailyPayment: number; // totalToPay / normalDays
   status: LoanStatus;
   capitalRecovered: number;

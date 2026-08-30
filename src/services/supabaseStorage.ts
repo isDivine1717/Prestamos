@@ -1075,16 +1075,16 @@ export const SupabaseStorage = {
     }
 
     return {
-      defaultNormalDays: data.default_normal_days,
-      defaultGraceDays: data.default_grace_days,
-      dailyCollectionEnabled: data.daily_collection_enabled,
-      chargeSundays: data.charge_sundays,
-      chargeHolidays: data.charge_holidays,
-      lateFeeEnabled: data.late_fee_enabled,
-      lateFeeType: data.late_fee_type,
-      lateFeeAmount: Number(data.late_fee_amount),
-      currencySymbol: data.currency_symbol,
-      currencyCode: data.currency_code,
+      defaultNormalDays: data.default_normal_days ?? DEFAULT_SETTINGS.defaultNormalDays,
+      defaultGraceDays: data.default_grace_days ?? DEFAULT_SETTINGS.defaultGraceDays,
+      dailyCollectionEnabled: data.daily_collection_enabled ?? DEFAULT_SETTINGS.dailyCollectionEnabled,
+      chargeSundays: data.charge_sundays ?? DEFAULT_SETTINGS.chargeSundays,
+      chargeHolidays: data.charge_holidays ?? DEFAULT_SETTINGS.chargeHolidays,
+      lateFeeEnabled: data.late_fee_enabled ?? DEFAULT_SETTINGS.lateFeeEnabled,
+      lateFeeType: data.late_fee_type ?? DEFAULT_SETTINGS.lateFeeType,
+      lateFeeAmount: Number(data.late_fee_amount ?? DEFAULT_SETTINGS.lateFeeAmount),
+      currencySymbol: data.currency_symbol ?? DEFAULT_SETTINGS.currencySymbol,
+      currencyCode: data.currency_code ?? DEFAULT_SETTINGS.currencyCode,
     };
   },
 
@@ -1119,16 +1119,16 @@ export const SupabaseStorage = {
     if (error) throw error;
 
     return {
-      defaultNormalDays: data.default_normal_days,
-      defaultGraceDays: data.default_grace_days,
-      dailyCollectionEnabled: data.daily_collection_enabled,
-      chargeSundays: data.charge_sundays,
-      chargeHolidays: data.charge_holidays,
-      lateFeeEnabled: data.late_fee_enabled,
-      lateFeeType: data.late_fee_type,
-      lateFeeAmount: Number(data.late_fee_amount),
-      currencySymbol: data.currency_symbol,
-      currencyCode: data.currency_code,
+      defaultNormalDays: data.default_normal_days ?? DEFAULT_SETTINGS.defaultNormalDays,
+      defaultGraceDays: data.default_grace_days ?? DEFAULT_SETTINGS.defaultGraceDays,
+      dailyCollectionEnabled: data.daily_collection_enabled ?? DEFAULT_SETTINGS.dailyCollectionEnabled,
+      chargeSundays: data.charge_sundays ?? DEFAULT_SETTINGS.chargeSundays,
+      chargeHolidays: data.charge_holidays ?? DEFAULT_SETTINGS.chargeHolidays,
+      lateFeeEnabled: data.late_fee_enabled ?? DEFAULT_SETTINGS.lateFeeEnabled,
+      lateFeeType: data.late_fee_type ?? DEFAULT_SETTINGS.lateFeeType,
+      lateFeeAmount: Number(data.late_fee_amount ?? DEFAULT_SETTINGS.lateFeeAmount),
+      currencySymbol: data.currency_symbol ?? DEFAULT_SETTINGS.currencySymbol,
+      currencyCode: data.currency_code ?? DEFAULT_SETTINGS.currencyCode,
     };
   },
 
