@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { formatCurrency } from '../utils/finance';
 import { getTodayFormatted } from '../utils/dates';
+import { getTelUrl, getWhatsAppUrl, getGoogleMapsUrl } from '../utils/contact';
 import {
   Banknote,
   CheckCircle2,
@@ -11,6 +12,8 @@ import {
   Filter,
   DollarSign,
   Phone,
+  MessageCircle,
+  MapPin,
   Calendar
 } from 'lucide-react';
 
@@ -168,52 +171,92 @@ export const CobranzaPage: React.FC = () => {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {filteredOverdue.map(({ loan, clientPhone, overdueDays, expectedAmount }) => (
-                  <div
-                    key={loan.id}
-                    className="bg-[#111111] border border-red-900/40 p-5 rounded-2xl space-y-3 shadow-lg hover:border-red-700/60 transition-all"
-                  >
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h4
-                          onClick={() => {
-                            setSelectedClientId(loan.clientId);
-                            setActiveTab('clientes');
-                          }}
-                          className="font-bold text-sm text-white hover:text-red-400 cursor-pointer"
-                        >
-                          {loan.clientName}
-                        </h4>
-                        <p className="text-xs text-zinc-500 flex items-center gap-1 mt-0.5">
-                          <Phone className="w-3 h-3 text-zinc-500" />
-                          <span>{clientPhone}</span>
-                        </p>
-                      </div>
-                      <span className="px-2 py-0.5 bg-red-500/10 text-red-500 text-[10px] font-bold rounded uppercase tracking-tighter">
-                        {overdueDays} DÍAS ATRASO
-                      </span>
-                    </div>
+                {filteredOverdue.map(({ loan, clientPhone, overdueDays, expectedAmount }) => {
+                  const clientObj = clients.find(c => c.id === loan.clientId);
+                  const clientAddress = clientObj?.address;
 
-                    <div className="bg-[#161616] p-3 rounded-lg border border-[#1F1F1F] flex justify-between items-center">
-                      <div>
-                        <span className="text-[10px] text-zinc-500 block uppercase font-bold tracking-widest">Cuota diaria</span>
-                        <span className="text-xs font-semibold text-zinc-300">{formatCurrency(expectedAmount)}</span>
-                      </div>
-                      <div>
-                        <span className="text-[10px] text-red-500 block uppercase font-bold tracking-widest">Saldo total</span>
-                        <span className="text-sm font-bold text-red-500">{formatCurrency(loan.balancePending)}</span>
-                      </div>
-                    </div>
-
-                    <button
-                      onClick={() => setRegisterPaymentModalLoan(loan)}
-                      className="w-full py-2 bg-red-600 hover:bg-red-500 text-white font-bold text-xs rounded transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                  return (
+                    <div
+                      key={loan.id}
+                      className="bg-[#111111] border border-red-900/40 p-5 rounded-2xl space-y-3 shadow-lg hover:border-red-700/60 transition-all"
                     >
-                      <DollarSign className="w-3.5 h-3.5 stroke-[3]" />
-                      <span>REGISTRAR PAGO DE ATRASO</span>
-                    </button>
-                  </div>
-                ))}
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <h4
+                            onClick={() => {
+                              setSelectedClientId(loan.clientId);
+                              setActiveTab('clientes');
+                            }}
+                            className="font-bold text-sm text-white hover:text-red-400 cursor-pointer"
+                          >
+                            {loan.clientName}
+                          </h4>
+                          <div className="flex items-center gap-2 mt-1">
+                            <p className="text-xs text-zinc-500 flex items-center gap-1 font-mono">
+                              <Phone className="w-3 h-3 text-zinc-500" />
+                              <span>{clientPhone}</span>
+                            </p>
+                            <div className="flex items-center gap-1.5">
+                              {getTelUrl(clientPhone) && (
+                                <a
+                                  href={getTelUrl(clientPhone)!}
+                                  className="p-1 rounded bg-[#161616] hover:bg-[#1E1E1E] text-[#22C55E] border border-[#22C55E]/30 hover:border-[#22C55E] transition-colors"
+                                  title="Llamar"
+                                >
+                                  <Phone className="w-3 h-3" />
+                                </a>
+                              )}
+                              {getWhatsAppUrl(clientPhone) && (
+                                <a
+                                  href={getWhatsAppUrl(clientPhone)!}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="p-1 rounded bg-[#22C55E]/15 hover:bg-[#22C55E]/25 text-[#22C55E] border border-[#22C55E]/40 hover:border-[#22C55E] transition-colors"
+                                  title="WhatsApp"
+                                >
+                                  <MessageCircle className="w-3 h-3" />
+                                </a>
+                              )}
+                              {getGoogleMapsUrl(clientAddress) && (
+                                <a
+                                  href={getGoogleMapsUrl(clientAddress)!}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="p-1 rounded bg-[#161616] hover:bg-[#1E1E1E] text-sky-400 border border-sky-500/30 hover:border-sky-400 transition-colors"
+                                  title="Ver ubicación"
+                                >
+                                  <MapPin className="w-3 h-3" />
+                                </a>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                        <span className="px-2 py-0.5 bg-red-500/10 text-red-500 text-[10px] font-bold rounded uppercase tracking-tighter">
+                          {overdueDays} DÍAS ATRASO
+                        </span>
+                      </div>
+
+                      <div className="bg-[#161616] p-3 rounded-lg border border-[#1F1F1F] flex justify-between items-center">
+                        <div>
+                          <span className="text-[10px] text-zinc-500 block uppercase font-bold tracking-widest">Cuota diaria</span>
+                          <span className="text-xs font-semibold text-zinc-300">{formatCurrency(expectedAmount)}</span>
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-red-500 block uppercase font-bold tracking-widest">Saldo total</span>
+                          <span className="text-sm font-bold text-red-500">{formatCurrency(loan.balancePending)}</span>
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={() => setRegisterPaymentModalLoan(loan)}
+                        className="w-full py-2 bg-red-600 hover:bg-red-500 text-white font-bold text-xs rounded transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        <DollarSign className="w-3.5 h-3.5 stroke-[3]" />
+                        <span>REGISTRAR PAGO DE ATRASO</span>
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -233,52 +276,92 @@ export const CobranzaPage: React.FC = () => {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {filteredPending.map(({ loan, clientPhone, expectedAmount }) => (
-                    <div
-                      key={loan.id}
-                      className="bg-[#111111] border border-[#1F1F1F] p-5 rounded-2xl space-y-3 shadow-lg hover:border-zinc-700 transition-all"
-                    >
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <h4
-                            onClick={() => {
-                              setSelectedClientId(loan.clientId);
-                              setActiveTab('clientes');
-                            }}
-                            className="font-bold text-sm text-white hover:text-[#22C55E] cursor-pointer"
-                          >
-                            {loan.clientName}
-                          </h4>
-                          <p className="text-xs text-zinc-500 flex items-center gap-1 mt-0.5">
-                            <Phone className="w-3 h-3 text-zinc-500" />
-                            <span>{clientPhone}</span>
-                          </p>
-                        </div>
-                        <span className="px-2 py-0.5 bg-orange-500/10 text-[#F97316] text-[10px] font-bold rounded uppercase tracking-tighter">
-                          PENDIENTE
-                        </span>
-                      </div>
+                  {filteredPending.map(({ loan, clientPhone, expectedAmount }) => {
+                    const clientObj = clients.find(c => c.id === loan.clientId);
+                    const clientAddress = clientObj?.address;
 
-                      <div className="bg-[#161616] p-3 rounded-lg border border-[#1F1F1F] flex justify-between items-center">
-                        <div>
-                          <span className="text-[10px] text-zinc-500 block uppercase font-bold tracking-widest">Cuota de Hoy</span>
-                          <span className="text-sm font-bold text-[#22C55E]">{formatCurrency(expectedAmount)}</span>
-                        </div>
-                        <div>
-                          <span className="text-[10px] text-zinc-500 block uppercase font-bold tracking-widest">Saldo Restante</span>
-                          <span className="text-xs font-semibold text-zinc-300">{formatCurrency(loan.balancePending)}</span>
-                        </div>
-                      </div>
-
-                      <button
-                        onClick={() => setRegisterPaymentModalLoan(loan)}
-                        className="w-full py-2 bg-[#22C55E] hover:bg-green-400 text-black font-bold text-xs rounded transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                    return (
+                      <div
+                        key={loan.id}
+                        className="bg-[#111111] border border-[#1F1F1F] p-5 rounded-2xl space-y-3 shadow-lg hover:border-zinc-700 transition-all"
                       >
-                        <DollarSign className="w-3.5 h-3.5 stroke-[3]" />
-                        <span>REGISTRAR PAGO</span>
-                      </button>
-                    </div>
-                  ))}
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <h4
+                              onClick={() => {
+                                setSelectedClientId(loan.clientId);
+                                setActiveTab('clientes');
+                              }}
+                              className="font-bold text-sm text-white hover:text-[#22C55E] cursor-pointer"
+                            >
+                              {loan.clientName}
+                            </h4>
+                            <div className="flex items-center gap-2 mt-1">
+                              <p className="text-xs text-zinc-500 flex items-center gap-1 font-mono">
+                                <Phone className="w-3 h-3 text-zinc-500" />
+                                <span>{clientPhone}</span>
+                              </p>
+                              <div className="flex items-center gap-1.5">
+                                {getTelUrl(clientPhone) && (
+                                  <a
+                                    href={getTelUrl(clientPhone)!}
+                                    className="p-1 rounded bg-[#161616] hover:bg-[#1E1E1E] text-[#22C55E] border border-[#22C55E]/30 hover:border-[#22C55E] transition-colors"
+                                    title="Llamar"
+                                  >
+                                    <Phone className="w-3 h-3" />
+                                  </a>
+                                )}
+                                {getWhatsAppUrl(clientPhone) && (
+                                  <a
+                                    href={getWhatsAppUrl(clientPhone)!}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="p-1 rounded bg-[#22C55E]/15 hover:bg-[#22C55E]/25 text-[#22C55E] border border-[#22C55E]/40 hover:border-[#22C55E] transition-colors"
+                                    title="WhatsApp"
+                                  >
+                                    <MessageCircle className="w-3 h-3" />
+                                  </a>
+                                )}
+                                {getGoogleMapsUrl(clientAddress) && (
+                                  <a
+                                    href={getGoogleMapsUrl(clientAddress)!}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="p-1 rounded bg-[#161616] hover:bg-[#1E1E1E] text-sky-400 border border-sky-500/30 hover:border-sky-400 transition-colors"
+                                    title="Ver ubicación"
+                                  >
+                                    <MapPin className="w-3 h-3" />
+                                  </a>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          <span className="px-2 py-0.5 bg-orange-500/10 text-[#F97316] text-[10px] font-bold rounded uppercase tracking-tighter">
+                            PENDIENTE
+                          </span>
+                        </div>
+
+                        <div className="bg-[#161616] p-3 rounded-lg border border-[#1F1F1F] flex justify-between items-center">
+                          <div>
+                            <span className="text-[10px] text-zinc-500 block uppercase font-bold tracking-widest">Cuota de Hoy</span>
+                            <span className="text-sm font-bold text-[#22C55E]">{formatCurrency(expectedAmount)}</span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-zinc-500 block uppercase font-bold tracking-widest">Saldo Restante</span>
+                            <span className="text-xs font-semibold text-zinc-300">{formatCurrency(loan.balancePending)}</span>
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => setRegisterPaymentModalLoan(loan)}
+                          className="w-full py-2 bg-[#22C55E] hover:bg-green-400 text-black font-bold text-xs rounded transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <DollarSign className="w-3.5 h-3.5 stroke-[3]" />
+                          <span>REGISTRAR PAGO</span>
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>

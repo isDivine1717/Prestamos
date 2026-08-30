@@ -6,6 +6,7 @@ import { formatDateLocale, formatDateTimeLocale, getDaysDifference, getTodayForm
 import { DeleteClientModal } from '../components/DeleteClientModal';
 import { StatementModal } from '../components/StatementModal';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { ClientQuickContact } from '../components/ClientQuickContact';
 import {
   User,
   Phone,
@@ -181,6 +182,11 @@ export const ExpedienteClientePage: React.FC = () => {
           </div>
         </div>
 
+        {/* Quick Contact Bar */}
+        <div className="p-4 bg-[#161616] rounded-xl border border-[#1F1F1F]">
+          <ClientQuickContact phone={client.phone} address={client.address} />
+        </div>
+
         {/* Qualification Description Banner */}
         <div className="p-3 bg-[#161616] rounded-lg border border-[#1F1F1F] text-xs text-zinc-300 flex items-center gap-3">
           <CheckCircle2 className="w-4 h-4 text-[#22C55E] shrink-0" />
@@ -254,7 +260,7 @@ export const ExpedienteClientePage: React.FC = () => {
 
             <div>
               <span className="text-zinc-500 block uppercase font-medium">Teléfono:</span>
-              <span className="text-sm font-mono font-bold text-zinc-200">{client.phone}</span>
+              <span className="text-sm font-mono font-bold text-zinc-200">{client.phone || 'No registrado'}</span>
             </div>
 
             <div>
@@ -276,6 +282,11 @@ export const ExpedienteClientePage: React.FC = () => {
               <span className="text-zinc-500 block uppercase font-medium">Fecha de Registro:</span>
               <span className="text-sm font-medium text-zinc-200">{formatDateLocale(client.createdAt)}</span>
             </div>
+          </div>
+
+          {/* Quick Contact within Tab */}
+          <div className="p-4 bg-[#141414] rounded-xl border border-zinc-800">
+            <ClientQuickContact phone={client.phone} address={client.address} />
           </div>
 
           {/* Danger Zone for Client Deletion */}

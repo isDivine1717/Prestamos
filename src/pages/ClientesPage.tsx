@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { Client, ClientRating } from '../types';
 import { formatCurrency } from '../utils/finance';
-import { Search, Filter, Phone, UserPlus, FileText, ChevronRight, AlertTriangle, Trophy, CheckCircle2 } from 'lucide-react';
+import { getTelUrl, getWhatsAppUrl, getGoogleMapsUrl } from '../utils/contact';
+import { Search, Filter, Phone, MessageCircle, MapPin, UserPlus, FileText, ChevronRight, AlertTriangle, Trophy, CheckCircle2 } from 'lucide-react';
 
 export const ClientesPage: React.FC = () => {
   const {
@@ -156,10 +157,46 @@ export const ClientesPage: React.FC = () => {
                     <h3 className="text-sm font-bold text-white group-hover:text-[#22C55E] transition-colors">
                       {client.firstName} {client.lastName}
                     </h3>
-                    <p className="text-xs text-zinc-500 mt-0.5 flex items-center gap-1">
-                      <Phone className="w-3 h-3 text-zinc-500" />
-                      <span>{client.phone}</span>
-                    </p>
+                    <div className="flex items-center gap-3 mt-1">
+                      <p className="text-xs text-zinc-500 flex items-center gap-1 font-mono">
+                        <Phone className="w-3 h-3 text-zinc-500" />
+                        <span>{client.phone}</span>
+                      </p>
+                      {/* Quick direct contact links */}
+                      <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                        {getTelUrl(client.phone) && (
+                          <a
+                            href={getTelUrl(client.phone)!}
+                            className="p-1 rounded bg-[#161616] hover:bg-[#1E1E1E] text-[#22C55E] border border-[#22C55E]/30 hover:border-[#22C55E] transition-colors"
+                            title={`Llamar a ${client.firstName}`}
+                          >
+                            <Phone className="w-3 h-3" />
+                          </a>
+                        )}
+                        {getWhatsAppUrl(client.phone) && (
+                          <a
+                            href={getWhatsAppUrl(client.phone)!}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-1 rounded bg-[#22C55E]/15 hover:bg-[#22C55E]/25 text-[#22C55E] border border-[#22C55E]/40 hover:border-[#22C55E] transition-colors"
+                            title={`WhatsApp con ${client.firstName}`}
+                          >
+                            <MessageCircle className="w-3 h-3" />
+                          </a>
+                        )}
+                        {getGoogleMapsUrl(client.address) && (
+                          <a
+                            href={getGoogleMapsUrl(client.address)!}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-1 rounded bg-[#161616] hover:bg-[#1E1E1E] text-sky-400 border border-sky-500/30 hover:border-sky-400 transition-colors"
+                            title={`Ver ubicación en Google Maps`}
+                          >
+                            <MapPin className="w-3 h-3" />
+                          </a>
+                        )}
+                      </div>
+                    </div>
                   </div>
                   {getRatingBadge(client.rating)}
                 </div>
