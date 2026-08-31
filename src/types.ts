@@ -66,6 +66,11 @@ export interface Loan {
   profitRecovered: number;
   totalPaid: number;
   balancePending: number;
+  lateFeeEnabled?: boolean;
+  lateFeeType?: 'percentage' | 'fixed';
+  lateFeeValue?: number; // percentage (%) or fixed amount ($)
+  lateFeePercentage?: number; // Compatibility
+  lateFeeAmount?: number; // Compatibility
   liquidatedAt?: string;
   cancelledAt?: string;
   cancellationReason?: string;
@@ -84,6 +89,7 @@ export interface PaymentTransaction {
   capitalPortion: number;
   profitPortion: number;
   difference: number; // Surplus (>0) or Shortfall (<0)
+  lateFeePortion?: number; // Amount applied to late fee
   paymentMethod: PaymentMethod;
   note?: string;
   dayNumber?: number;
@@ -96,8 +102,10 @@ export interface AppSettings {
   chargeSundays: boolean;
   chargeHolidays: boolean;
   lateFeeEnabled: boolean;
-  lateFeeType: 'fixed' | 'percentage';
-  lateFeeAmount: number;
+  lateFeeType: 'percentage' | 'fixed'; // 'percentage' (%) or 'fixed' ($)
+  lateFeeValue: number; // Value corresponding to the type (e.g. 5 for 5% or 50 for $50)
+  lateFeePercentage?: number; // Compatibility
+  lateFeeAmount?: number; // Compatibility
   currencySymbol: string;
   currencyCode: string;
 }

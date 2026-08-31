@@ -17,8 +17,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   chargeSundays: true,
   chargeHolidays: true,
   lateFeeEnabled: false,
-  lateFeeType: 'fixed',
-  lateFeeAmount: 50,
+  lateFeeType: 'percentage',
+  lateFeeValue: 0,
+  lateFeePercentage: 0,
+  lateFeeAmount: 0,
   currencySymbol: '$',
   currencyCode: 'MXN',
 };

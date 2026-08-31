@@ -22,8 +22,10 @@ const DEFAULT_SETTINGS: AppSettings = {
   chargeSundays: true,
   chargeHolidays: true,
   lateFeeEnabled: false,
-  lateFeeType: 'fixed',
-  lateFeeAmount: 50,
+  lateFeeType: 'percentage',
+  lateFeeValue: 0,
+  lateFeePercentage: 0,
+  lateFeeAmount: 0,
   currencySymbol: '$',
   currencyCode: 'MXN',
 };
@@ -149,6 +151,21 @@ function mapLoanFromDb(row: any): Loan {
     ? `${client.first_name ?? ''} ${client.last_name ?? ''}`.trim()
     : row.clientName || 'Cliente';
 
+  const lateFeeType: 'percentage' | 'fixed' = (
+    row.late_fee_type ||
+    row.lateFeeType ||
+    (row.late_fee_amount !== undefined && (row.late_fee_percentage === undefined || Number(row.late_fee_percentage) === 0) ? 'fixed' : 'percentage')
+  ) as 'percentage' | 'fixed';
+
+  let lateFeeValue = 0;
+  if (row.late_fee_value !== undefined && row.late_fee_value !== null) {
+    lateFeeValue = Number(row.late_fee_value);
+  } else if (lateFeeType === 'fixed') {
+    lateFeeValue = Number(row.late_fee_amount ?? row.lateFeeAmount ?? 0);
+  } else {
+    lateFeeValue = Number(row.late_fee_percentage ?? row.late_fee_amount ?? row.lateFeePercentage ?? row.lateFeeAmount ?? 0);
+  }
+
   return {
     id: row.id,
     clientId: row.client_id || row.clientId,
@@ -167,6 +184,11 @@ function mapLoanFromDb(row: any): Loan {
     profitRecovered: Number(row.profit_recovered ?? row.profitRecovered ?? 0),
     totalPaid: Number(row.total_paid ?? row.totalPaid ?? 0),
     balancePending: Number(row.balance_pending ?? row.balancePending ?? 0),
+    lateFeeEnabled: row.late_fee_enabled ?? row.lateFeeEnabled ?? false,
+    lateFeeType,
+    lateFeeValue,
+    lateFeePercentage: lateFeeType === 'percentage' ? lateFeeValue : (Number(row.late_fee_percentage ?? row.lateFeePercentage ?? 0)),
+    lateFeeAmount: lateFeeType === 'fixed' ? lateFeeValue : (Number(row.late_fee_amount ?? row.lateFeeAmount ?? 0)),
     liquidatedAt: row.liquidated_at || row.liquidatedAt || undefined,
     cancelledAt: row.cancelled_at || row.cancelledAt || undefined,
     cancellationReason: row.cancellation_reason || row.cancellationReason || undefined,
@@ -199,6 +221,7 @@ function mapPaymentFromDb(row: any): PaymentTransaction {
     capitalPortion: Number(row.capital_portion ?? row.capitalPortion ?? 0),
     profitPortion: Number(row.profit_portion ?? row.profitPortion ?? 0),
     difference: Number(row.difference ?? 0),
+    lateFeePortion: Number(row.late_fee_portion ?? row.lateFeePortion ?? 0),
     paymentMethod: (row.payment_method || row.paymentMethod) as PaymentMethod,
     note: row.note ?? undefined,
     dayNumber: row.day_number ?? row.dayNumber ?? undefined,
@@ -648,7 +671,10 @@ export const SupabaseStorage = {
 
     const userId = await getCurrentUserId();
 
-    const loanPayload = {
+    const feeType = loanData.lateFeeType || 'percentage';
+    const feeVal = loanData.lateFeeValue ?? (feeType === 'percentage' ? (loanData.lateFeePercentage ?? 0) : (loanData.lateFeeAmount ?? 0));
+
+    const loanPayload: Record<string, any> = {
       user_id: userId,
       client_id: loanData.clientId,
       start_date: loanData.startDate,
@@ -665,20 +691,68 @@ export const SupabaseStorage = {
       profit_recovered: loanData.profitRecovered,
       total_paid: loanData.totalPaid,
       balance_pending: loanData.balancePending,
+      late_fee_enabled: Boolean(loanData.lateFeeEnabled),
+      late_fee_type: feeType,
+      late_fee_amount: feeType === 'fixed' ? feeVal : feeVal,
+      late_fee_percentage: feeType === 'percentage' ? feeVal : 0,
+      late_fee_value: feeVal,
       liquidated_at: loanData.liquidatedAt ?? null,
       cancelled_at: loanData.cancelledAt ?? null,
       cancellation_reason: loanData.cancellationReason ?? null,
     };
 
-    const { data: loanRow, error: loanError } = await supabase
+    let loanRow: any = null;
+    const { data, error: loanError } = await supabase
       .from('loans')
       .insert(loanPayload)
       .select('*')
       .single();
 
-    if (loanError) throw loanError;
+    if (!loanError && data) {
+      loanRow = data;
+    } else if (loanError) {
+      // If late_fee_value or late_fee_percentage column does not exist in the DB schema, retry progressively
+      if (loanError.message && (loanError.message.includes('late_fee_value') || loanError.message.includes('late_fee_percentage') || loanError.message.includes('column') || loanError.code === 'PGRST204')) {
+        const { late_fee_value, ...cleanPayload } = loanPayload;
+        const { data: retryData, error: retryError } = await supabase
+          .from('loans')
+          .insert(cleanPayload)
+          .select('*')
+          .single();
 
-    if (loanData.schedule.length > 0) {
+        if (retryError) {
+          const { late_fee_percentage, ...cleanPayload2 } = cleanPayload;
+          const { data: retryData2, error: retryError2 } = await supabase
+            .from('loans')
+            .insert({
+              ...cleanPayload2,
+              late_fee_type: feeType,
+              late_fee_amount: feeVal
+            })
+            .select('*')
+            .single();
+
+          if (retryError2) {
+            const { late_fee_type, late_fee_amount, ...minimalPayload } = cleanPayload2;
+            const { data: minData, error: minError } = await supabase
+              .from('loans')
+              .insert(minimalPayload)
+              .select('*')
+              .single();
+            if (minError) throw minError;
+            loanRow = minData;
+          } else {
+            loanRow = retryData2;
+          }
+        } else {
+          loanRow = retryData;
+        }
+      } else {
+        throw loanError;
+      }
+    }
+
+    if (loanData.schedule.length > 0 && loanRow) {
       const schedulePayload = loanData.schedule.map(day =>
         mapScheduleToDb(day, loanRow.id, userId)
       );
@@ -845,6 +919,7 @@ export const SupabaseStorage = {
     capitalPortion: number;
     profitPortion: number;
     difference: number;
+    lateFeePortion?: number;
     paymentMethod: PaymentMethod;
     note?: string;
     dayNumber?: number;
@@ -867,7 +942,7 @@ export const SupabaseStorage = {
 
     const userId = await getCurrentUserId();
 
-    const payload = {
+    const payload: Record<string, any> = {
       user_id: userId,
       loan_id: payment.loanId,
       client_id: payment.clientId,
@@ -877,11 +952,13 @@ export const SupabaseStorage = {
       capital_portion: payment.capitalPortion,
       profit_portion: payment.profitPortion,
       difference: payment.difference,
+      late_fee_portion: payment.lateFeePortion ?? 0,
       payment_method: payment.paymentMethod,
       note: payment.note ?? null,
       day_number: payment.dayNumber ?? null,
     };
 
+    let pmtResult: any = null;
     const { data, error } = await supabase
       .from('payments')
       .insert(payload)
@@ -899,6 +976,25 @@ export const SupabaseStorage = {
     }
 
     if (error && error.code !== 'PGRST200') {
+      // If late_fee_portion column is not in DB table, retry without it
+      if (error.message && (error.message.includes('late_fee_portion') || error.message.includes('column') || error.code === 'PGRST204')) {
+        const { late_fee_portion, ...cleanPayload } = payload;
+        const { data: retryData, error: retryError } = await supabase
+          .from('payments')
+          .insert(cleanPayload)
+          .select(`
+            *,
+            clients (
+              first_name,
+              last_name
+            )
+          `)
+          .single();
+
+        if (!retryError && retryData) {
+          return mapPaymentFromDb(retryData);
+        }
+      }
       throw error;
     }
 
@@ -1074,6 +1170,16 @@ export const SupabaseStorage = {
       return DEFAULT_SETTINGS;
     }
 
+    const lateFeeType: 'percentage' | 'fixed' = (data.late_fee_type || DEFAULT_SETTINGS.lateFeeType) as 'percentage' | 'fixed';
+    let lateFeeValue = 0;
+    if (data.late_fee_value !== undefined && data.late_fee_value !== null) {
+      lateFeeValue = Number(data.late_fee_value);
+    } else if (lateFeeType === 'fixed') {
+      lateFeeValue = Number(data.late_fee_amount ?? DEFAULT_SETTINGS.lateFeeValue);
+    } else {
+      lateFeeValue = Number(data.late_fee_percentage ?? data.late_fee_amount ?? DEFAULT_SETTINGS.lateFeeValue);
+    }
+
     return {
       defaultNormalDays: data.default_normal_days ?? DEFAULT_SETTINGS.defaultNormalDays,
       defaultGraceDays: data.default_grace_days ?? DEFAULT_SETTINGS.defaultGraceDays,
@@ -1081,8 +1187,10 @@ export const SupabaseStorage = {
       chargeSundays: data.charge_sundays ?? DEFAULT_SETTINGS.chargeSundays,
       chargeHolidays: data.charge_holidays ?? DEFAULT_SETTINGS.chargeHolidays,
       lateFeeEnabled: data.late_fee_enabled ?? DEFAULT_SETTINGS.lateFeeEnabled,
-      lateFeeType: data.late_fee_type ?? DEFAULT_SETTINGS.lateFeeType,
-      lateFeeAmount: Number(data.late_fee_amount ?? DEFAULT_SETTINGS.lateFeeAmount),
+      lateFeeType,
+      lateFeeValue,
+      lateFeePercentage: lateFeeType === 'percentage' ? lateFeeValue : 0,
+      lateFeeAmount: lateFeeType === 'fixed' ? lateFeeValue : 0,
       currencySymbol: data.currency_symbol ?? DEFAULT_SETTINGS.currencySymbol,
       currencyCode: data.currency_code ?? DEFAULT_SETTINGS.currencyCode,
     };
@@ -1096,7 +1204,10 @@ export const SupabaseStorage = {
 
     const userId = await getCurrentUserId();
 
-    const payload = {
+    const feeType = settings.lateFeeType || 'percentage';
+    const feeVal = settings.lateFeeValue ?? (feeType === 'percentage' ? (settings.lateFeePercentage ?? 0) : (settings.lateFeeAmount ?? 0));
+
+    const payload: Record<string, any> = {
       user_id: userId,
       default_normal_days: settings.defaultNormalDays,
       default_grace_days: settings.defaultGraceDays,
@@ -1104,31 +1215,78 @@ export const SupabaseStorage = {
       charge_sundays: settings.chargeSundays,
       charge_holidays: settings.chargeHolidays,
       late_fee_enabled: settings.lateFeeEnabled,
-      late_fee_type: settings.lateFeeType,
-      late_fee_amount: settings.lateFeeAmount,
+      late_fee_type: feeType,
+      late_fee_amount: feeType === 'fixed' ? feeVal : feeVal,
+      late_fee_percentage: feeType === 'percentage' ? feeVal : 0,
+      late_fee_value: feeVal,
       currency_symbol: settings.currencySymbol,
       currency_code: settings.currencyCode,
     };
 
+    let savedRow: any = null;
     const { data, error } = await supabase
       .from('app_settings')
       .upsert(payload, { onConflict: 'user_id' })
       .select('*')
       .single();
 
-    if (error) throw error;
+    if (!error && data) {
+      savedRow = data;
+    } else if (error) {
+      // If late_fee_value or late_fee_percentage is rejected due to missing column, retry progressively
+      if (error.message && (error.message.includes('late_fee_value') || error.message.includes('late_fee_percentage') || error.message.includes('column') || error.code === 'PGRST204')) {
+        const { late_fee_value, ...cleanPayload } = payload;
+        const { data: retryData, error: retryError } = await supabase
+          .from('app_settings')
+          .upsert(cleanPayload, { onConflict: 'user_id' })
+          .select('*')
+          .single();
+
+        if (retryError) {
+          const { late_fee_percentage, ...cleanPayload2 } = cleanPayload;
+          const { data: retryData2, error: retryError2 } = await supabase
+            .from('app_settings')
+            .upsert({
+              ...cleanPayload2,
+              late_fee_type: feeType,
+              late_fee_amount: feeVal
+            }, { onConflict: 'user_id' })
+            .select('*')
+            .single();
+
+          if (retryError2) throw retryError2;
+          savedRow = retryData2;
+        } else {
+          savedRow = retryData;
+        }
+      } else {
+        throw error;
+      }
+    }
+
+    const resLateFeeType: 'percentage' | 'fixed' = (savedRow?.late_fee_type || feeType) as 'percentage' | 'fixed';
+    let resLateFeeValue = feeVal;
+    if (savedRow?.late_fee_value !== undefined && savedRow?.late_fee_value !== null) {
+      resLateFeeValue = Number(savedRow.late_fee_value);
+    } else if (resLateFeeType === 'fixed') {
+      resLateFeeValue = Number(savedRow?.late_fee_amount ?? feeVal);
+    } else {
+      resLateFeeValue = Number(savedRow?.late_fee_percentage ?? savedRow?.late_fee_amount ?? feeVal);
+    }
 
     return {
-      defaultNormalDays: data.default_normal_days ?? DEFAULT_SETTINGS.defaultNormalDays,
-      defaultGraceDays: data.default_grace_days ?? DEFAULT_SETTINGS.defaultGraceDays,
-      dailyCollectionEnabled: data.daily_collection_enabled ?? DEFAULT_SETTINGS.dailyCollectionEnabled,
-      chargeSundays: data.charge_sundays ?? DEFAULT_SETTINGS.chargeSundays,
-      chargeHolidays: data.charge_holidays ?? DEFAULT_SETTINGS.chargeHolidays,
-      lateFeeEnabled: data.late_fee_enabled ?? DEFAULT_SETTINGS.lateFeeEnabled,
-      lateFeeType: data.late_fee_type ?? DEFAULT_SETTINGS.lateFeeType,
-      lateFeeAmount: Number(data.late_fee_amount ?? DEFAULT_SETTINGS.lateFeeAmount),
-      currencySymbol: data.currency_symbol ?? DEFAULT_SETTINGS.currencySymbol,
-      currencyCode: data.currency_code ?? DEFAULT_SETTINGS.currencyCode,
+      defaultNormalDays: savedRow?.default_normal_days ?? settings.defaultNormalDays,
+      defaultGraceDays: savedRow?.default_grace_days ?? settings.defaultGraceDays,
+      dailyCollectionEnabled: savedRow?.daily_collection_enabled ?? settings.dailyCollectionEnabled,
+      chargeSundays: savedRow?.charge_sundays ?? settings.chargeSundays,
+      chargeHolidays: savedRow?.charge_holidays ?? settings.chargeHolidays,
+      lateFeeEnabled: savedRow?.late_fee_enabled ?? settings.lateFeeEnabled,
+      lateFeeType: resLateFeeType,
+      lateFeeValue: resLateFeeValue,
+      lateFeePercentage: resLateFeeType === 'percentage' ? resLateFeeValue : 0,
+      lateFeeAmount: resLateFeeType === 'fixed' ? resLateFeeValue : 0,
+      currencySymbol: savedRow?.currency_symbol ?? settings.currencySymbol,
+      currencyCode: savedRow?.currency_code ?? settings.currencyCode,
     };
   },
 

@@ -47,15 +47,105 @@ export function calculateDailyPayment(totalToPay: number, normalDays: number = 6
 /**
  * Calculates exact proportion of capital and profit for a payment
  */
-export function calculatePaymentBreakdown(paymentAmount: number, capital: number, totalToPay: number): { capitalPortion: number; profitPortion: number } {
-  if (totalToPay <= 0) {
-    return { capitalPortion: paymentAmount, profitPortion: 0 };
+export function calculatePaymentBreakdown(
+  paymentAmount: number,
+  capital: number,
+  totalToPay: number,
+  lateFeePortion: number = 0
+): { capitalPortion: number; profitPortion: number; lateFeePortion: number } {
+  const effectiveLateFee = Math.max(0, Math.min(paymentAmount, lateFeePortion));
+  const principalPayment = Math.max(0, paymentAmount - effectiveLateFee);
+
+  if (totalToPay <= 0 || principalPayment <= 0) {
+    return { capitalPortion: principalPayment, profitPortion: 0, lateFeePortion: effectiveLateFee };
   }
+
   const capitalRatio = capital / totalToPay;
-  const capitalPortion = Math.round((paymentAmount * capitalRatio + Number.EPSILON) * 100) / 100;
-  const profitPortion = Math.round(((paymentAmount - capitalPortion) + Number.EPSILON) * 100) / 100;
+  const capitalPortion = Math.round((principalPayment * capitalRatio + Number.EPSILON) * 100) / 100;
+  const profitPortion = Math.round(((principalPayment - capitalPortion) + Number.EPSILON) * 100) / 100;
   
-  return { capitalPortion, profitPortion };
+  return { capitalPortion, profitPortion, lateFeePortion: effectiveLateFee };
+}
+
+export interface LoanLateFeeInfo {
+  isLateFeeApplicable: boolean;
+  overdueDays: number;
+  feeType: 'percentage' | 'fixed';
+  feeValue: number;
+  percentage: number;
+  dailyLateFee: number;
+  totalLateFee: number;
+  rateDescription: string;
+}
+
+/**
+ * Calculates the late fee (recargo por días de retraso) for a loan.
+ * Applies only when there are overdue days (> 0) and late fee is enabled for this specific loan.
+ * Supports both Percentage (%) of daily payment and Fixed Amount ($) per day.
+ */
+export function calculateLoanLateFee(loan: Loan, overdueDaysCount?: number): LoanLateFeeInfo {
+  const overdueDays = overdueDaysCount !== undefined
+    ? Math.max(0, overdueDaysCount)
+    : (loan.schedule || []).filter(s => s.status === 'overdue').length;
+
+  const isEnabled = Boolean(loan.lateFeeEnabled);
+
+  // Determine lateFeeType and lateFeeValue with full backward compatibility:
+  let feeType: 'percentage' | 'fixed' = loan.lateFeeType || 'percentage';
+  let feeValue = 0;
+
+  if (loan.lateFeeValue !== undefined && loan.lateFeeValue !== null) {
+    feeValue = Number(loan.lateFeeValue);
+  } else if (loan.lateFeeType === 'fixed') {
+    feeValue = Number(loan.lateFeeAmount ?? 0);
+  } else if (loan.lateFeeType === 'percentage') {
+    feeValue = Number(loan.lateFeePercentage ?? loan.lateFeeAmount ?? 0);
+  } else if (loan.lateFeePercentage !== undefined && loan.lateFeePercentage > 0) {
+    feeType = 'percentage';
+    feeValue = Number(loan.lateFeePercentage);
+  } else if (loan.lateFeeAmount !== undefined && loan.lateFeeAmount > 0) {
+    feeType = 'fixed';
+    feeValue = Number(loan.lateFeeAmount);
+  }
+
+  if (!isEnabled || overdueDays <= 0 || feeValue <= 0) {
+    return {
+      isLateFeeApplicable: false,
+      overdueDays,
+      feeType,
+      feeValue,
+      percentage: feeType === 'percentage' ? feeValue : 0,
+      dailyLateFee: 0,
+      totalLateFee: 0,
+      rateDescription: feeValue > 0
+        ? (feeType === 'percentage' ? `${feeValue}% por día` : `${formatCurrency(feeValue)} fijo por día`)
+        : 'Sin recargo'
+    };
+  }
+
+  let dailyLateFee = 0;
+  let rateDescription = '';
+
+  if (feeType === 'percentage') {
+    dailyLateFee = Math.round((loan.dailyPayment * (feeValue / 100) + Number.EPSILON) * 100) / 100;
+    rateDescription = `${feeValue}% por día (${formatCurrency(dailyLateFee)}/día)`;
+  } else {
+    dailyLateFee = Math.round((feeValue + Number.EPSILON) * 100) / 100;
+    rateDescription = `${formatCurrency(feeValue)} fijo por día`;
+  }
+
+  const totalLateFee = Math.round((dailyLateFee * overdueDays + Number.EPSILON) * 100) / 100;
+
+  return {
+    isLateFeeApplicable: totalLateFee > 0,
+    overdueDays,
+    feeType,
+    feeValue,
+    percentage: feeType === 'percentage' ? feeValue : 0,
+    dailyLateFee,
+    totalLateFee,
+    rateDescription
+  };
 }
 
 /**

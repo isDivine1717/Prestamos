@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { Loan, PaymentMethod } from '../types';
-import { formatCurrency, calculatePaymentBreakdown } from '../utils/finance';
+import { formatCurrency, calculatePaymentBreakdown, calculateLoanLateFee } from '../utils/finance';
 import { getTodayFormatted } from '../utils/dates';
-import { X, Check, AlertTriangle, Loader2 } from 'lucide-react';
+import { X, Check, AlertTriangle, Loader2, Clock } from 'lucide-react';
 
 interface Props {
   loan: Loan | null;
@@ -19,12 +19,32 @@ export const RegisterPaymentModal: React.FC<Props> = ({ loan, onClose }) => {
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
 
+  const lateFeeInfo = loan ? calculateLoanLateFee(loan) : {
+    isLateFeeApplicable: false,
+    overdueDays: 0,
+    percentage: 0,
+    dailyLateFee: 0,
+    totalLateFee: 0,
+    rateDescription: 'Sin recargo'
+  };
+
+  const totalExpectedWithLateFee = loan
+    ? (loan.schedule.find(s => s.date === getTodayFormatted())?.expectedAmount ?? loan.dailyPayment) + lateFeeInfo.totalLateFee
+    : 0;
+
   useEffect(() => {
     if (loan) {
       const today = getTodayFormatted();
       const todayEntry = loan.schedule.find(s => s.date === today);
       const expected = todayEntry ? todayEntry.expectedAmount : loan.dailyPayment;
-      setAmountReceived(String(expected));
+      const currentLateFee = calculateLoanLateFee(loan);
+      
+      // Default to cuota de hoy + recargo si existe atraso
+      const defaultAmount = currentLateFee.isLateFeeApplicable && currentLateFee.totalLateFee > 0
+        ? expected + currentLateFee.totalLateFee
+        : expected;
+
+      setAmountReceived(String(defaultAmount));
       setPaymentMethod('cash');
       setNote('');
       setErrorMessage('');
@@ -39,8 +59,13 @@ export const RegisterPaymentModal: React.FC<Props> = ({ loan, onClose }) => {
   const todaySchedule = loan.schedule.find(s => s.date === todayStr);
   const expectedAmount = todaySchedule ? todaySchedule.expectedAmount : loan.dailyPayment;
 
-  const difference = numericAmount - expectedAmount;
-  const breakdown = calculatePaymentBreakdown(numericAmount, loan.capital, loan.totalToPay);
+  // Portion of received amount dedicated to late fee
+  const lateFeePortion = lateFeeInfo.isLateFeeApplicable && lateFeeInfo.totalLateFee > 0
+    ? Math.min(numericAmount, lateFeeInfo.totalLateFee)
+    : 0;
+
+  const difference = numericAmount - (expectedAmount + lateFeeInfo.totalLateFee);
+  const breakdown = calculatePaymentBreakdown(numericAmount, loan.capital, loan.totalToPay, lateFeePortion);
   const overdueDaysCount = loan.schedule.filter(s => s.status === 'overdue').length;
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -62,6 +87,7 @@ export const RegisterPaymentModal: React.FC<Props> = ({ loan, onClose }) => {
         amountReceived: numericAmount,
         paymentMethod,
         note: note.trim() || undefined,
+        lateFeePortion: breakdown.lateFeePortion,
       });
 
       if (success) {
@@ -114,18 +140,18 @@ export const RegisterPaymentModal: React.FC<Props> = ({ loan, onClose }) => {
               </div>
               <span
                 className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider shrink-0 ${
-                  loan.status === 'overdue'
+                  loan.status === 'overdue' || lateFeeInfo.isLateFeeApplicable
                     ? 'bg-red-500/10 text-red-500 border border-red-900/40'
                     : 'bg-green-500/10 text-[#22C55E] border border-green-900/40'
                 }`}
               >
-                {loan.status === 'overdue' ? 'ATRASADO' : 'ACTIVO'}
+                {loan.status === 'overdue' || lateFeeInfo.isLateFeeApplicable ? 'CON ATRASO' : 'ACTIVO'}
               </span>
             </div>
 
             <div className="grid grid-cols-2 gap-2 pt-2 border-t border-[#1F1F1F] text-xs">
               <div>
-                <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest block">Cuota de hoy:</span>
+                <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest block">Cuota diaria base:</span>
                 <span className="font-bold text-[#22C55E] text-xs">{formatCurrency(expectedAmount)}</span>
               </div>
               <div>
@@ -134,10 +160,20 @@ export const RegisterPaymentModal: React.FC<Props> = ({ loan, onClose }) => {
               </div>
             </div>
 
-            {overdueDaysCount > 0 && (
-              <div className="mt-2 p-2 bg-red-950/30 rounded border border-red-900/40 flex items-center gap-2 text-xs text-red-400 font-medium">
-                <AlertTriangle className="w-4 h-4 text-red-500 shrink-0" />
-                <span>Atención: Cliente cuenta con {overdueDaysCount} día(s) en atraso acumulado.</span>
+            {lateFeeInfo.isLateFeeApplicable && lateFeeInfo.totalLateFee > 0 && (
+              <div className="mt-2 p-2.5 bg-orange-950/30 rounded-lg border border-orange-900/40 space-y-1">
+                <div className="flex items-center gap-1.5 text-xs text-orange-400 font-bold">
+                  <Clock className="w-4 h-4 text-orange-400 shrink-0" />
+                  <span>Días de retraso: {lateFeeInfo.overdueDays} día(s)</span>
+                </div>
+                <div className="flex justify-between items-center text-xs text-zinc-300 pt-1">
+                  <span>Recargo por retraso ({lateFeeInfo.rateDescription}):</span>
+                  <span className="font-bold text-orange-400">+{formatCurrency(lateFeeInfo.totalLateFee)}</span>
+                </div>
+                <div className="flex justify-between items-center text-xs font-bold text-white pt-1 border-t border-orange-900/30">
+                  <span>Total sugerido (Cuota + Recargo):</span>
+                  <span className="text-[#22C55E]">{formatCurrency(totalExpectedWithLateFee)}</span>
+                </div>
               </div>
             )}
           </div>
@@ -168,15 +204,15 @@ export const RegisterPaymentModal: React.FC<Props> = ({ loan, onClose }) => {
                 onClick={() => setAmountReceived(String(expectedAmount))}
                 className="px-2.5 py-1 bg-[#161616] hover:bg-zinc-800 text-zinc-300 border border-[#1F1F1F] text-xs rounded font-bold transition-colors cursor-pointer"
               >
-                Monto Exacto ({formatCurrency(expectedAmount)})
+                Cuota Base ({formatCurrency(expectedAmount)})
               </button>
-              {overdueDaysCount > 0 && (
+              {lateFeeInfo.isLateFeeApplicable && lateFeeInfo.totalLateFee > 0 && (
                 <button
                   type="button"
-                  onClick={() => setAmountReceived(String(expectedAmount * (overdueDaysCount + 1)))}
-                  className="px-2.5 py-1 bg-red-950/40 hover:bg-red-900/60 text-red-300 text-xs rounded border border-red-900/60 font-bold transition-colors cursor-pointer"
+                  onClick={() => setAmountReceived(String(totalExpectedWithLateFee))}
+                  className="px-2.5 py-1 bg-orange-950/40 hover:bg-orange-900/60 text-orange-300 text-xs rounded border border-orange-900/60 font-bold transition-colors cursor-pointer"
                 >
-                  Pagar Atrasos ({formatCurrency(expectedAmount * (overdueDaysCount + 1))})
+                  Cuota + Recargo ({formatCurrency(totalExpectedWithLateFee)})
                 </button>
               )}
             </div>
@@ -198,6 +234,12 @@ export const RegisterPaymentModal: React.FC<Props> = ({ loan, onClose }) => {
                   : '$0.00 Exacto'}
               </span>
             </div>
+            {breakdown.lateFeePortion > 0 && (
+              <div className="flex justify-between items-center text-zinc-400 border-t border-[#1F1F1F] pt-1.5 text-orange-400">
+                <span className="text-[10px] uppercase font-bold">Cobro de Recargo por mora:</span>
+                <span className="font-bold">{formatCurrency(breakdown.lateFeePortion)}</span>
+              </div>
+            )}
             <div className="flex justify-between items-center text-zinc-400 border-t border-[#1F1F1F] pt-1.5">
               <span className="text-[10px] uppercase font-bold text-zinc-500">Abono a Capital:</span>
               <span className="font-bold text-zinc-200">{formatCurrency(breakdown.capitalPortion)}</span>

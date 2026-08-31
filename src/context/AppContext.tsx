@@ -127,6 +127,11 @@ interface AppContextType {
     totalProfit: number;
     normalDays: number;
     graceDays: number;
+    lateFeeEnabled?: boolean;
+    lateFeeType?: 'percentage' | 'fixed';
+    lateFeeValue?: number;
+    lateFeePercentage?: number;
+    lateFeeAmount?: number;
   }) => Promise<Loan>;
 
   cancelLoan: (
@@ -142,6 +147,7 @@ interface AppContextType {
     amountReceived: number;
     paymentMethod: PaymentMethod;
     note?: string;
+    lateFeePortion?: number;
   }) => Promise<boolean>;
 
   // CONFIGURACION
@@ -734,6 +740,11 @@ export const AppProvider: React.FC<{
       totalProfit: number;
       normalDays: number;
       graceDays: number;
+      lateFeeEnabled?: boolean;
+      lateFeeType?: 'percentage' | 'fixed';
+      lateFeeValue?: number;
+      lateFeePercentage?: number;
+      lateFeeAmount?: number;
     }
   ): Promise<Loan> => {
     try {
@@ -772,6 +783,23 @@ export const AppProvider: React.FC<{
           loanData.graceDays
         );
 
+      const effectiveLateFeeEnabled =
+        loanData.lateFeeEnabled !== undefined
+          ? loanData.lateFeeEnabled
+          : (settings.lateFeeEnabled ?? false);
+
+      const effectiveLateFeeType =
+        loanData.lateFeeType !== undefined
+          ? loanData.lateFeeType
+          : (settings.lateFeeType ?? 'percentage');
+
+      const effectiveLateFeeValue =
+        loanData.lateFeeValue !== undefined
+          ? loanData.lateFeeValue
+          : (loanData.lateFeePercentage !== undefined
+              ? loanData.lateFeePercentage
+              : (settings.lateFeeValue ?? settings.lateFeePercentage ?? 0));
+
       const loanDataForSupabase = {
         clientId: loanData.clientId,
         startDate,
@@ -788,6 +816,11 @@ export const AppProvider: React.FC<{
         profitRecovered: 0,
         totalPaid: 0,
         balancePending: totalToPay,
+        lateFeeEnabled: effectiveLateFeeEnabled,
+        lateFeeType: effectiveLateFeeType,
+        lateFeeValue: effectiveLateFeeValue,
+        lateFeePercentage: effectiveLateFeeType === 'percentage' ? effectiveLateFeeValue : 0,
+        lateFeeAmount: effectiveLateFeeType === 'fixed' ? effectiveLateFeeValue : 0,
         liquidatedAt: undefined,
         cancelledAt: undefined,
         cancellationReason: undefined,
@@ -912,6 +945,7 @@ export const AppProvider: React.FC<{
       amountReceived: number;
       paymentMethod: PaymentMethod;
       note?: string;
+      lateFeePortion?: number;
     }
   ): Promise<boolean> => {
     try {
@@ -941,12 +975,14 @@ export const AppProvider: React.FC<{
 
       const {
         capitalPortion,
-        profitPortion
+        profitPortion,
+        lateFeePortion
       } =
         calculatePaymentBreakdown(
           params.amountReceived,
           loan.capital,
-          loan.totalToPay
+          loan.totalToPay,
+          params.lateFeePortion ?? 0
         );
 
       /* -----------------------------------------
@@ -994,6 +1030,7 @@ export const AppProvider: React.FC<{
             params.amountReceived,
           capitalPortion,
           profitPortion,
+          lateFeePortion,
           difference:
             Math.round(
               (

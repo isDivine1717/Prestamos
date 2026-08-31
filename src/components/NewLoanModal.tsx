@@ -20,6 +20,9 @@ export const NewLoanModal: React.FC<Props> = ({ isOpen, onClose, preselectedClie
   const [profitInput, setProfitInput] = useState<string>('20');
   const [normalDays, setNormalDays] = useState<number>(settings.defaultNormalDays ?? 65);
   const [graceDays, setGraceDays] = useState<number>(settings.defaultGraceDays ?? 0);
+  const [lateFeeEnabled, setLateFeeEnabled] = useState<boolean>(settings.lateFeeEnabled ?? false);
+  const [lateFeeType, setLateFeeType] = useState<'percentage' | 'fixed'>(settings.lateFeeType ?? 'percentage');
+  const [lateFeeValue, setLateFeeValue] = useState<number>(settings.lateFeeValue ?? settings.lateFeePercentage ?? 0);
   const [step, setStep] = useState<number>(1); // 1: Config, 2: Calendar & Confirm
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
@@ -28,6 +31,9 @@ export const NewLoanModal: React.FC<Props> = ({ isOpen, onClose, preselectedClie
     if (isOpen) {
       setNormalDays(settings.defaultNormalDays ?? 65);
       setGraceDays(settings.defaultGraceDays ?? 0);
+      setLateFeeEnabled(settings.lateFeeEnabled ?? false);
+      setLateFeeType(settings.lateFeeType ?? 'percentage');
+      setLateFeeValue(settings.lateFeeValue ?? settings.lateFeePercentage ?? (settings.lateFeeAmount ?? 0));
       setCapitalInput('10000');
       setProfitType('percentage');
       setProfitInput('20');
@@ -82,6 +88,11 @@ export const NewLoanModal: React.FC<Props> = ({ isOpen, onClose, preselectedClie
       return;
     }
 
+    if (isNaN(lateFeeValue) || lateFeeValue < 0) {
+      setErrorMessage('El valor de recargo no puede ser negativo.');
+      return;
+    }
+
     if (isSubmitting) return;
 
     setIsSubmitting(true);
@@ -94,7 +105,12 @@ export const NewLoanModal: React.FC<Props> = ({ isOpen, onClose, preselectedClie
         profitValue,
         totalProfit,
         normalDays: Number(normalDays),
-        graceDays: Number(graceDays)
+        graceDays: Number(graceDays),
+        lateFeeEnabled,
+        lateFeeType,
+        lateFeeValue: Number(lateFeeValue),
+        lateFeePercentage: lateFeeType === 'percentage' ? Number(lateFeeValue) : 0,
+        lateFeeAmount: lateFeeType === 'fixed' ? Number(lateFeeValue) : 0,
       });
 
       onClose();
@@ -317,6 +333,93 @@ export const NewLoanModal: React.FC<Props> = ({ isOpen, onClose, preselectedClie
                 </div>
               </div>
 
+              {/* Late Fee Configuration */}
+              <div className="p-4 bg-[#161616] rounded-xl border border-[#1F1F1F] space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-2.5 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={lateFeeEnabled}
+                      onChange={(e) => setLateFeeEnabled(e.target.checked)}
+                      className="w-4 h-4 accent-[#22C55E] rounded"
+                    />
+                    <span className="text-xs font-bold uppercase tracking-widest text-zinc-300">
+                      Cobro por días de retraso
+                    </span>
+                  </label>
+                  <span className="text-[10px] text-zinc-500 font-medium">
+                    {lateFeeEnabled ? 'Activo' : 'Desactivado'}
+                  </span>
+                </div>
+
+                {lateFeeEnabled && (
+                  <div className="pl-6 pt-1 space-y-3">
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase tracking-widest text-zinc-400 mb-1.5">
+                        Tipo de Recargo
+                      </label>
+                      <div className="flex items-center gap-2.5">
+                        <button
+                          type="button"
+                          onClick={() => setLateFeeType('percentage')}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer border ${
+                            lateFeeType === 'percentage'
+                              ? 'bg-[#22C55E]/15 border-[#22C55E] text-[#22C55E]'
+                              : 'bg-[#111111] border-[#1F1F1F] text-zinc-400 hover:text-zinc-200'
+                          }`}
+                        >
+                          Porcentaje (%)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setLateFeeType('fixed')}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-colors cursor-pointer border ${
+                            lateFeeType === 'fixed'
+                              ? 'bg-[#22C55E]/15 border-[#22C55E] text-[#22C55E]'
+                              : 'bg-[#111111] border-[#1F1F1F] text-zinc-400 hover:text-zinc-200'
+                          }`}
+                        >
+                          Cantidad fija ($)
+                        </button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase tracking-widest text-zinc-400 mb-1">
+                        {lateFeeType === 'percentage'
+                          ? 'Porcentaje de recargo por día de mora (%)'
+                          : 'Monto fijo de recargo por día de mora ($)'}
+                      </label>
+                      <div className="relative w-48">
+                        {lateFeeType === 'fixed' && (
+                          <span className="absolute left-3 top-2 text-xs font-bold text-zinc-500 pointer-events-none">$</span>
+                        )}
+                        <input
+                          type="number"
+                          min="0"
+                          max={lateFeeType === 'percentage' ? 100 : undefined}
+                          step="any"
+                          value={lateFeeValue}
+                          onChange={(e) => setLateFeeValue(Number(e.target.value))}
+                          className={`w-full bg-[#111111] border border-[#1F1F1F] rounded-lg ${
+                            lateFeeType === 'fixed' ? 'pl-7 pr-3.5' : 'pl-3.5 pr-8'
+                          } py-2 text-xs font-bold text-white focus:outline-none focus:border-[#22C55E]`}
+                          placeholder={lateFeeType === 'percentage' ? '5' : '50'}
+                        />
+                        {lateFeeType === 'percentage' && (
+                          <span className="absolute right-3 top-2 text-xs font-bold text-zinc-500 pointer-events-none">%</span>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-zinc-500 mt-1">
+                        {lateFeeType === 'percentage'
+                          ? `Se aplicará ${lateFeeValue}% sobre la cuota diaria (${formatCurrency(dailyPayment * (lateFeeValue / 100))} / día) por cada día de mora.`
+                          : `Se aplicará un recargo fijo de ${formatCurrency(lateFeeValue)} / día por cada día de mora.`}
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* Calculated Summary Card */}
               <div className="p-4 bg-[#161616] border border-[#1F1F1F] rounded-xl space-y-2">
                 <div className="flex justify-between items-center text-xs">
@@ -341,6 +444,16 @@ export const NewLoanModal: React.FC<Props> = ({ isOpen, onClose, preselectedClie
                   <span className="text-[10px] uppercase tracking-widest">Cuota Diaria Estimada:</span>
                   <span className="text-sm text-[#22C55E]">{formatCurrency(dailyPayment)} / día</span>
                 </div>
+                {lateFeeEnabled && (
+                  <div className="flex justify-between items-center text-xs pt-1 border-t border-[#1F1F1F] text-orange-400">
+                    <span className="text-[10px] uppercase tracking-widest">Recargo por atraso:</span>
+                    <span className="font-bold">
+                      {lateFeeType === 'percentage'
+                        ? `${lateFeeValue}% / día (${formatCurrency(dailyPayment * (lateFeeValue / 100))})`
+                        : `${formatCurrency(lateFeeValue)} fijo / día`}
+                    </span>
+                  </div>
+                )}
               </div>
             </>
           ) : (
