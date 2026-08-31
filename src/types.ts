@@ -74,6 +74,7 @@ export interface Loan {
   liquidatedAt?: string;
   cancelledAt?: string;
   cancellationReason?: string;
+  notes?: string;
   schedule: LoanScheduleDay[];
 }
 

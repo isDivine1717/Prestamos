@@ -192,6 +192,7 @@ function mapLoanFromDb(row: any): Loan {
     liquidatedAt: row.liquidated_at || row.liquidatedAt || undefined,
     cancelledAt: row.cancelled_at || row.cancelledAt || undefined,
     cancellationReason: row.cancellation_reason || row.cancellationReason || undefined,
+    notes: row.notes || row.cancellation_reason || row.cancellationReason || undefined,
     schedule: scheduleRows.length > 0
       ? scheduleRows.map(mapScheduleFromDb).sort((a: LoanScheduleDay, b: LoanScheduleDay) => a.dayNumber - b.dayNumber)
       : (Array.isArray(row.schedule) ? row.schedule : []),
@@ -698,7 +699,7 @@ export const SupabaseStorage = {
       late_fee_value: feeVal,
       liquidated_at: loanData.liquidatedAt ?? null,
       cancelled_at: loanData.cancelledAt ?? null,
-      cancellation_reason: loanData.cancellationReason ?? null,
+      cancellation_reason: loanData.cancellationReason ?? (loanData as any).notes ?? null,
     };
 
     let loanRow: any = null;

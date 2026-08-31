@@ -15,6 +15,8 @@ import { LoginPage } from './pages/LoginPage';
 
 import { RegisterPaymentModal } from './components/RegisterPaymentModal';
 import { NewLoanModal } from './components/NewLoanModal';
+import { LoanTypeSelectionModal } from './components/LoanTypeSelectionModal';
+import { AddPaidLoanModal } from './components/AddPaidLoanModal';
 import { NewClientModal } from './components/NewClientModal';
 import { DocumentViewerModal } from './components/DocumentViewerModal';
 
@@ -24,10 +26,15 @@ const MainAppContent: React.FC = () => {
     isLoggedIn,
     activeTab,
     selectedClientId,
+    clients,
     isNewClientModalOpen,
     setIsNewClientModalOpen,
     isNewLoanModalOpen,
     setIsNewLoanModalOpen,
+    isLoanTypeSelectModalOpen,
+    setIsLoanTypeSelectModalOpen,
+    isPaidLoanModalOpen,
+    setIsPaidLoanModalOpen,
     loanClientPreselectId,
     setLoanClientPreselectId,
     registerPaymentModalLoan,
@@ -91,11 +98,44 @@ const MainAppContent: React.FC = () => {
         onClose={() => setRegisterPaymentModalLoan(null)}
       />
 
+      <LoanTypeSelectionModal
+        isOpen={isLoanTypeSelectModalOpen}
+        clientName={
+          loanClientPreselectId
+            ? (() => {
+                const c = clients.find(cl => cl.id === loanClientPreselectId);
+                return c ? `${c.firstName} ${c.lastName}` : undefined;
+              })()
+            : undefined
+        }
+        onClose={() => {
+          setIsLoanTypeSelectModalOpen(false);
+          setLoanClientPreselectId(null);
+        }}
+        onSelectNewLoan={() => {
+          setIsLoanTypeSelectModalOpen(false);
+          setIsNewLoanModalOpen(true);
+        }}
+        onSelectPaidLoan={() => {
+          setIsLoanTypeSelectModalOpen(false);
+          setIsPaidLoanModalOpen(true);
+        }}
+      />
+
       <NewLoanModal
         isOpen={isNewLoanModalOpen}
         preselectedClientId={loanClientPreselectId}
         onClose={() => {
           setIsNewLoanModalOpen(false);
+          setLoanClientPreselectId(null);
+        }}
+      />
+
+      <AddPaidLoanModal
+        isOpen={isPaidLoanModalOpen}
+        preselectedClientId={loanClientPreselectId}
+        onClose={() => {
+          setIsPaidLoanModalOpen(false);
           setLoanClientPreselectId(null);
         }}
       />

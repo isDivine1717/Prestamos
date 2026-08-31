@@ -25,6 +25,15 @@ export function formatDateLocale(dateStr: string, options?: Intl.DateTimeFormatO
   return date.toLocaleDateString('es-MX', defaultOptions);
 }
 
+export function formatMonthYearLocale(dateStr: string): string {
+  if (!dateStr) return '';
+  const [year, month, day] = dateStr.split('-').map(Number);
+  if (!year || !month) return dateStr;
+  const date = new Date(year, month - 1, day || 1);
+  const formatted = date.toLocaleDateString('es-MX', { month: 'long', year: 'numeric' });
+  return formatted.charAt(0).toUpperCase() + formatted.slice(1);
+}
+
 export function formatDateTimeLocale(isoStr?: string): string {
   if (!isoStr) return '';
   const date = new Date(isoStr);

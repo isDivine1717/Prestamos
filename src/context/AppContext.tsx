@@ -63,6 +63,12 @@ interface AppContextType {
   isNewLoanModalOpen: boolean;
   setIsNewLoanModalOpen: (open: boolean) => void;
 
+  isLoanTypeSelectModalOpen: boolean;
+  setIsLoanTypeSelectModalOpen: (open: boolean) => void;
+
+  isPaidLoanModalOpen: boolean;
+  setIsPaidLoanModalOpen: (open: boolean) => void;
+
   loanClientPreselectId: string | null;
   setLoanClientPreselectId: (id: string | null) => void;
 
@@ -132,6 +138,14 @@ interface AppContextType {
     lateFeeValue?: number;
     lateFeePercentage?: number;
     lateFeeAmount?: number;
+  }) => Promise<Loan>;
+
+  createHistoricalPaidLoan: (data: {
+    clientId: string;
+    startDate: string;
+    endDate: string;
+    capital: number;
+    notes?: string;
   }) => Promise<Loan>;
 
   cancelLoan: (
@@ -230,6 +244,16 @@ export const AppProvider: React.FC<{
   const [
     isNewLoanModalOpen,
     setIsNewLoanModalOpen
+  ] = useState(false);
+
+  const [
+    isLoanTypeSelectModalOpen,
+    setIsLoanTypeSelectModalOpen
+  ] = useState(false);
+
+  const [
+    isPaidLoanModalOpen,
+    setIsPaidLoanModalOpen
   ] = useState(false);
 
   const [
@@ -853,6 +877,92 @@ export const AppProvider: React.FC<{
       showToast(
         error?.message ||
           'No se pudo crear el préstamo.',
+        'error'
+      );
+
+      throw error;
+    }
+  };
+
+  /* =========================================================
+     CREATE HISTORICAL PAID LOAN
+  ========================================================= */
+
+  const createHistoricalPaidLoan = async (data: {
+    clientId: string;
+    startDate: string;
+    endDate: string;
+    capital: number;
+    notes?: string;
+  }): Promise<Loan> => {
+    try {
+      const client = clients.find(
+        item => item.id === data.clientId
+      );
+
+      if (!client) {
+        throw new Error(
+          'No se encontró el cliente seleccionado.'
+        );
+      }
+
+      if (data.capital <= 0) {
+        throw new Error(
+          'El monto del préstamo debe ser mayor a $0.'
+        );
+      }
+
+      const loanDataForSupabase = {
+        clientId: data.clientId,
+        startDate: data.startDate,
+        capital: data.capital,
+        profitType: 'fixed' as const,
+        profitValue: 0,
+        totalProfit: 0,
+        totalToPay: data.capital,
+        normalDays: 0,
+        graceDays: 0,
+        dailyPayment: 0,
+        status: 'liquidated' as const,
+        capitalRecovered: data.capital,
+        profitRecovered: 0,
+        totalPaid: data.capital,
+        balancePending: 0,
+        lateFeeEnabled: false,
+        lateFeeType: 'percentage' as const,
+        lateFeeValue: 0,
+        lateFeePercentage: 0,
+        lateFeeAmount: 0,
+        liquidatedAt: data.endDate,
+        cancelledAt: undefined,
+        cancellationReason: data.notes?.trim() || undefined,
+        notes: data.notes?.trim() || undefined,
+        schedule: []
+      };
+
+      const newLoan = await SupabaseStorage.createLoan(
+        loanDataForSupabase
+      );
+
+      setLoans(prev => [
+        newLoan,
+        ...prev
+      ]);
+
+      showToast(
+        `Préstamo histórico de $${data.capital.toLocaleString('es-MX')} guardado como liquidado.`
+      );
+
+      return newLoan;
+    } catch (error: any) {
+      console.error(
+        'Error guardando préstamo histórico:',
+        error
+      );
+
+      showToast(
+        error?.message ||
+          'No se pudo guardar el préstamo histórico.',
         'error'
       );
 
@@ -1759,6 +1869,12 @@ export const AppProvider: React.FC<{
         isNewLoanModalOpen,
         setIsNewLoanModalOpen,
 
+        isLoanTypeSelectModalOpen,
+        setIsLoanTypeSelectModalOpen,
+
+        isPaidLoanModalOpen,
+        setIsPaidLoanModalOpen,
+
         loanClientPreselectId,
         setLoanClientPreselectId,
 
@@ -1779,6 +1895,7 @@ export const AppProvider: React.FC<{
         deleteClientDocument,
 
         createLoan,
+        createHistoricalPaidLoan,
         cancelLoan,
         deleteLoan,
 

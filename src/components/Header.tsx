@@ -9,6 +9,7 @@ export const Header: React.FC = () => {
     searchQuery,
     setSearchQuery,
     setIsNewLoanModalOpen,
+    setIsLoanTypeSelectModalOpen,
     setIsNewClientModalOpen,
     adminUser,
     loans
@@ -65,11 +66,11 @@ export const Header: React.FC = () => {
           </div>
 
           <button
-            onClick={() => setIsNewLoanModalOpen(true)}
+            onClick={() => setIsLoanTypeSelectModalOpen(true)}
             className="px-4 py-2 bg-[#F97316] text-white text-xs font-bold rounded shadow-lg shadow-orange-900/20 hover:bg-orange-600 transition-colors cursor-pointer flex items-center gap-1.5"
           >
             <Plus className="w-3.5 h-3.5 stroke-[3]" />
-            <span>+ NUEVO PRÉSTAMO</span>
+            <span>+ AGREGAR PRÉSTAMO</span>
           </button>
 
           <button

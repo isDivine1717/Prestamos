@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { Client, ClientDocument, Loan } from '../types';
 import { formatCurrency, calculateClientRating } from '../utils/finance';
-import { formatDateLocale, formatDateTimeLocale, getDaysDifference, getTodayFormatted } from '../utils/dates';
+import { formatDateLocale, formatDateTimeLocale, formatMonthYearLocale, getDaysDifference, getTodayFormatted } from '../utils/dates';
 import { DeleteClientModal } from '../components/DeleteClientModal';
 import { StatementModal } from '../components/StatementModal';
 import { ConfirmDialog } from '../components/ConfirmDialog';
@@ -40,6 +40,7 @@ export const ExpedienteClientePage: React.FC = () => {
     deleteClientDocument,
     setRegisterPaymentModalLoan,
     setIsNewLoanModalOpen,
+    setIsLoanTypeSelectModalOpen,
     setLoanClientPreselectId,
     setViewingDocument,
     deleteLoan
@@ -163,12 +164,12 @@ export const ExpedienteClientePage: React.FC = () => {
             <button
               onClick={() => {
                 setLoanClientPreselectId(client.id);
-                setIsNewLoanModalOpen(true);
+                setIsLoanTypeSelectModalOpen(true);
               }}
               className="px-4 py-2 bg-[#F97316] hover:bg-orange-600 text-white font-bold text-xs rounded shadow-lg shadow-orange-900/20 transition-colors flex items-center gap-1.5 cursor-pointer shrink-0 uppercase tracking-wider"
             >
               <Plus className="w-3.5 h-3.5 stroke-[3]" />
-              <span>+ NUEVO PRÉSTAMO</span>
+              <span>+ AGREGAR PRÉSTAMO</span>
             </button>
 
             <button
@@ -541,45 +542,117 @@ export const ExpedienteClientePage: React.FC = () => {
       {/* TAB 5: HISTORIAL */}
       {activeTab === 'historial' && (
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 space-y-4">
-          <h3 className="text-base font-bold text-zinc-100">Historial de Todos los Préstamos</h3>
-
-          <div className="divide-y divide-zinc-800 font-mono text-xs">
-            {clientLoans.map(loan => (
-              <div key={loan.id} className="py-3 flex justify-between items-center flex-wrap gap-2">
-                <div>
-                  <span className="font-bold text-zinc-200">ID: {loan.id}</span>
-                  <p className="text-zinc-500 text-[11px] font-sans">Inicio: {formatDateLocale(loan.startDate)}</p>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="text-right">
-                    <span className="font-bold text-zinc-200 block">{formatCurrency(loan.totalToPay)}</span>
-                    <span className={`text-[10px] uppercase font-bold ${
-                      loan.status === 'liquidated' ? 'text-blue-400' : loan.status === 'active' ? 'text-emerald-400' : 'text-rose-400'
-                    }`}>
-                      {loan.status}
-                    </span>
-                  </div>
-                  <button
-                    onClick={() => setSelectedStatementLoan(loan)}
-                    className="px-3 py-1.5 bg-[#161616] hover:bg-zinc-800 text-zinc-200 border border-[#1F1F1F] font-bold text-xs rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors font-sans"
-                    title="Generar estado de cuenta en PDF"
-                  >
-                    <FileText className="w-3.5 h-3.5 text-[#22C55E]" />
-                    <span>Generar estado de cuenta</span>
-                  </button>
-
-                  <button
-                    onClick={() => setLoanToDelete(loan)}
-                    className="px-3 py-1.5 bg-red-950/40 hover:bg-red-900/70 border border-red-900/50 text-red-400 hover:text-red-200 font-bold text-xs rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors font-sans"
-                    title="Eliminar este préstamo"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>Eliminar préstamo</span>
-                  </button>
-                </div>
-              </div>
-            ))}
+          <div className="flex items-center justify-between">
+            <h3 className="text-base font-bold text-zinc-100">Historial de Todos los Préstamos</h3>
+            <span className="text-xs text-zinc-400 font-mono">
+              Total registrados: {clientLoans.length}
+            </span>
           </div>
+
+          {clientLoans.length === 0 ? (
+            <div className="py-8 text-center text-zinc-500 text-xs">
+              No hay préstamos registrados para este cliente.
+            </div>
+          ) : (
+            <div className="space-y-3 font-sans">
+              {clientLoans.map(loan => {
+                const isLiquidated = loan.status === 'liquidated';
+                const isCancelled = loan.status === 'cancelled';
+                const isActive = loan.status === 'active';
+                const isOverdue = loan.status === 'overdue';
+                const isHistorical = (loan.normalDays === 0 || !loan.schedule || loan.schedule.length === 0) && isLiquidated;
+
+                return (
+                  <div
+                    key={loan.id}
+                    className="p-4 bg-[#141414] border border-zinc-800/80 hover:border-zinc-700 rounded-xl transition-all flex flex-col md:flex-row md:items-center justify-between gap-3"
+                  >
+                    <div className="space-y-1.5 flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-mono font-bold text-white">
+                          ID: {loan.id.slice(0, 8)}...
+                        </span>
+
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border ${
+                            isLiquidated
+                              ? 'bg-sky-950/60 text-sky-400 border-sky-800/50'
+                              : isActive
+                              ? 'bg-emerald-950/60 text-emerald-400 border-emerald-800/50'
+                              : isOverdue
+                              ? 'bg-rose-950/60 text-rose-400 border-rose-800/50'
+                              : 'bg-zinc-800 text-zinc-400 border-zinc-700'
+                          }`}
+                        >
+                          {isLiquidated ? 'PAGADO / LIQUIDADO' : loan.status}
+                        </span>
+
+                        {isHistorical && (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-zinc-800/80 text-zinc-300 border border-zinc-700">
+                            Histórico libreta
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-4 text-xs text-zinc-400 flex-wrap">
+                        <div>
+                          <span className="text-zinc-500 font-semibold">Inicio: </span>
+                          <span className="text-zinc-200">
+                            {formatDateLocale(loan.startDate)}
+                          </span>
+                        </div>
+
+                        {loan.liquidatedAt && (
+                          <div>
+                            <span className="text-zinc-500 font-semibold">Finalización: </span>
+                            <span className="text-sky-300">
+                              {formatDateLocale(loan.liquidatedAt)}
+                            </span>
+                          </div>
+                        )}
+
+                        <div>
+                          <span className="text-zinc-500 font-semibold">Monto prestado: </span>
+                          <span className="font-bold text-white font-mono">
+                            {formatCurrency(loan.capital)}
+                          </span>
+                        </div>
+                      </div>
+
+                      {(loan.notes || loan.cancellationReason) && (
+                        <p className="text-[11px] text-zinc-400 bg-[#0E0E0E] border border-zinc-800/60 rounded-lg px-3 py-1.5 mt-1 italic">
+                          <span className="text-zinc-500 font-semibold not-italic">Notas: </span>
+                          {loan.notes || loan.cancellationReason}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0 pt-2 md:pt-0 border-t md:border-t-0 border-zinc-800/60">
+                      {loan.schedule && loan.schedule.length > 0 && (
+                        <button
+                          onClick={() => setSelectedStatementLoan(loan)}
+                          className="px-3 py-1.5 bg-[#1A1A1A] hover:bg-zinc-800 text-zinc-200 border border-[#242424] font-bold text-xs rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors"
+                          title="Generar estado de cuenta en PDF"
+                        >
+                          <FileText className="w-3.5 h-3.5 text-[#22C55E]" />
+                          <span>Estado de cuenta</span>
+                        </button>
+                      )}
+
+                      <button
+                        onClick={() => setLoanToDelete(loan)}
+                        className="px-3 py-1.5 bg-red-950/40 hover:bg-red-900/70 border border-red-900/50 text-red-400 hover:text-red-200 font-bold text-xs rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors"
+                        title="Eliminar este préstamo"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Eliminar</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
       {/* Delete Client Confirmation Modal */}
