@@ -3,7 +3,7 @@ import { useApp } from '../context/AppContext';
 import { Client, ClientRating } from '../types';
 import { formatCurrency } from '../utils/finance';
 import { getTelUrl, getWhatsAppUrl, getGoogleMapsUrl } from '../utils/contact';
-import { Search, Filter, Phone, MessageCircle, MapPin, UserPlus, FileText, ChevronRight, AlertTriangle, Trophy, CheckCircle2 } from 'lucide-react';
+import { Search, Filter, Phone, MessageCircle, MapPin, UserPlus, FileText, ChevronRight, AlertTriangle, Trophy, CheckCircle2, Pencil } from 'lucide-react';
 
 export const ClientesPage: React.FC = () => {
   const {
@@ -12,7 +12,8 @@ export const ClientesPage: React.FC = () => {
     setSelectedClientId,
     searchQuery,
     setSearchQuery,
-    setIsNewClientModalOpen
+    setIsNewClientModalOpen,
+    setClientToEdit
   } = useApp();
 
   const [ratingFilter, setRatingFilter] = useState<string>('all');
@@ -198,7 +199,21 @@ export const ClientesPage: React.FC = () => {
                       </div>
                     </div>
                   </div>
-                  {getRatingBadge(client.rating)}
+                  <div className="flex items-center gap-2">
+                    {getRatingBadge(client.rating)}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setClientToEdit(client);
+                        setIsNewClientModalOpen(true);
+                      }}
+                      className="p-1.5 rounded-lg bg-[#161616] hover:bg-[#222222] text-zinc-400 hover:text-white border border-zinc-800 hover:border-zinc-600 transition-colors"
+                      title={`Editar datos de ${client.firstName}`}
+                    >
+                      <Pencil className="w-3.5 h-3.5 text-[#22C55E]" />
+                    </button>
+                  </div>
                 </div>
 
                 {/* Financial Summary Box */}

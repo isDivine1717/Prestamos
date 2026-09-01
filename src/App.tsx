@@ -29,6 +29,8 @@ const MainAppContent: React.FC = () => {
     clients,
     isNewClientModalOpen,
     setIsNewClientModalOpen,
+    clientToEdit,
+    setClientToEdit,
     isNewLoanModalOpen,
     setIsNewLoanModalOpen,
     isLoanTypeSelectModalOpen,
@@ -142,7 +144,11 @@ const MainAppContent: React.FC = () => {
 
       <NewClientModal
         isOpen={isNewClientModalOpen}
-        onClose={() => setIsNewClientModalOpen(false)}
+        clientToEdit={clientToEdit}
+        onClose={() => {
+          setIsNewClientModalOpen(false);
+          setClientToEdit(null);
+        }}
       />
 
       <DocumentViewerModal />

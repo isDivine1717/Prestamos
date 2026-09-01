@@ -60,6 +60,9 @@ interface AppContextType {
   isNewClientModalOpen: boolean;
   setIsNewClientModalOpen: (open: boolean) => void;
 
+  clientToEdit: Client | null;
+  setClientToEdit: (client: Client | null) => void;
+
   isNewLoanModalOpen: boolean;
   setIsNewLoanModalOpen: (open: boolean) => void;
 
@@ -240,6 +243,11 @@ export const AppProvider: React.FC<{
     isNewClientModalOpen,
     setIsNewClientModalOpen
   ] = useState(false);
+
+  const [
+    clientToEdit,
+    setClientToEdit
+  ] = useState<Client | null>(null);
 
   const [
     isNewLoanModalOpen,
@@ -533,6 +541,23 @@ export const AppProvider: React.FC<{
           client.id === id
             ? updatedClient
             : client
+        )
+      );
+
+      const fullName = `${updatedClient.firstName} ${updatedClient.lastName}`.trim();
+      setLoans(prev =>
+        prev.map(loan =>
+          loan.clientId === id
+            ? { ...loan, clientName: fullName }
+            : loan
+        )
+      );
+
+      setTransactions(prev =>
+        prev.map(tx =>
+          tx.clientId === id
+            ? { ...tx, clientName: fullName }
+            : tx
         )
       );
 
@@ -1865,6 +1890,9 @@ export const AppProvider: React.FC<{
 
         isNewClientModalOpen,
         setIsNewClientModalOpen,
+
+        clientToEdit,
+        setClientToEdit,
 
         isNewLoanModalOpen,
         setIsNewLoanModalOpen,

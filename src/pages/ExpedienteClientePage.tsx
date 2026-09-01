@@ -24,7 +24,8 @@ import {
   ChevronUp,
   X,
   ArrowLeft,
-  DollarSign
+  DollarSign,
+  Pencil
 } from 'lucide-react';
 
 export const ExpedienteClientePage: React.FC = () => {
@@ -39,6 +40,8 @@ export const ExpedienteClientePage: React.FC = () => {
     uploadClientDocument,
     deleteClientDocument,
     setRegisterPaymentModalLoan,
+    setIsNewClientModalOpen,
+    setClientToEdit,
     setIsNewLoanModalOpen,
     setIsLoanTypeSelectModalOpen,
     setLoanClientPreselectId,
@@ -163,6 +166,18 @@ export const ExpedienteClientePage: React.FC = () => {
 
             <button
               onClick={() => {
+                setClientToEdit(client);
+                setIsNewClientModalOpen(true);
+              }}
+              className="px-3.5 py-2 bg-[#1A1A1A] hover:bg-zinc-800 border border-[#242424] hover:border-zinc-600 text-zinc-200 font-bold text-xs rounded transition-colors flex items-center gap-1.5 cursor-pointer shrink-0 uppercase tracking-wider"
+              title="Editar información del cliente"
+            >
+              <Pencil className="w-3.5 h-3.5 text-[#22C55E]" />
+              <span>Editar cliente</span>
+            </button>
+
+            <button
+              onClick={() => {
                 setLoanClientPreselectId(client.id);
                 setIsLoanTypeSelectModalOpen(true);
               }}
@@ -251,7 +266,19 @@ export const ExpedienteClientePage: React.FC = () => {
       {/* TAB 2: INFORMACIÓN PERSONAL */}
       {activeTab === 'personal' && (
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 space-y-6">
-          <h3 className="text-base font-bold text-zinc-100 border-b border-zinc-800 pb-3">Datos del Expediente</h3>
+          <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
+            <h3 className="text-base font-bold text-zinc-100">Datos del Expediente</h3>
+            <button
+              onClick={() => {
+                setClientToEdit(client);
+                setIsNewClientModalOpen(true);
+              }}
+              className="px-3 py-1.5 bg-[#161616] hover:bg-zinc-800 text-zinc-200 border border-[#242424] hover:border-zinc-600 font-bold text-xs rounded-lg flex items-center gap-1.5 cursor-pointer transition-colors"
+            >
+              <Pencil className="w-3.5 h-3.5 text-[#22C55E]" />
+              <span>Editar cliente</span>
+            </button>
+          </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs">
             <div>
