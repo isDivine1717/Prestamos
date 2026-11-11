@@ -1,7 +1,8 @@
 import React, { useState, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { Client, ClientDocument, Loan } from '../types';
-import { formatCurrency, calculateClientRating } from '../utils/finance';
+import { formatCurrency, calculateClientRating, summarizeClientProfit, summarizeLoanProfit } from '../utils/finance';
+import { LoanFinesSection } from '../components/LoanFinesSection';
 import { formatDateLocale, formatDateTimeLocale, formatMonthYearLocale, getDaysDifference, getTodayFormatted } from '../utils/dates';
 import { DeleteClientModal } from '../components/DeleteClientModal';
 import { StatementModal } from '../components/StatementModal';
@@ -33,6 +34,7 @@ export const ExpedienteClientePage: React.FC = () => {
     clients,
     loans,
     transactions,
+    fines,
     selectedClientId,
     setSelectedClientId,
     updateClient,
@@ -87,7 +89,16 @@ export const ExpedienteClientePage: React.FC = () => {
   const totalBorrowedHist = clientLoans.reduce((sum, l) => sum + l.totalToPay, 0);
   const totalPaidHist = clientLoans.reduce((sum, l) => sum + l.totalPaid, 0);
   const currentTotalDebt = activeLoans.reduce((sum, l) => sum + l.balancePending, 0);
-  const totalProfitGenerated = clientLoans.reduce((sum, l) => sum + l.profitRecovered, 0);
+  // Ganancia histórica del cliente: misma fórmula que en Reportes
+  // (ganancia normal + multas cobradas, sin duplicar), por lo que la
+  // suma de todos los expedientes cuadra con las ganancias totales.
+  const clientProfitSummary = summarizeClientProfit(
+    client.id,
+    loans,
+    transactions,
+    fines
+  );
+  const totalProfitGenerated = clientProfitSummary.totalProfit;
 
   const ratingInfo = calculateClientRating(clientLoans, clientTxns);
 
@@ -258,7 +269,89 @@ export const ExpedienteClientePage: React.FC = () => {
           <div className="p-5 bg-zinc-900 border border-zinc-800 rounded-2xl space-y-1">
             <span className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider block">Ganancia Generada</span>
             <span className="text-2xl font-mono font-bold text-emerald-400">{formatCurrency(totalProfitGenerated)}</span>
-            <p className="text-[11px] text-zinc-400">{ratingInfo.punctualityPct}% puntualidad global</p>
+            <p className="text-[11px] text-zinc-400">
+              Normal: {formatCurrency(clientProfitSummary.normalProfit)} · Multas: {formatCurrency(clientProfitSummary.fineProfit)}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 1b: GANANCIA HISTÓRICA POR EXPEDIENTE */}
+      {activeTab === 'resumen' && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+          <div className="p-5 bg-zinc-900 border border-zinc-800 rounded-2xl space-y-1">
+            <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider block">Préstamos del cliente</span>
+            <span className="text-2xl font-mono font-bold text-zinc-100">{clientProfitSummary.loanCount}</span>
+            <p className="text-[11px] text-zinc-400">
+              {clientProfitSummary.activeLoanCount} activo(s) · {clientProfitSummary.liquidatedLoanCount} liquidado(s)
+            </p>
+          </div>
+
+          <div className="p-5 bg-zinc-900 border border-zinc-800 rounded-2xl space-y-1">
+            <span className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider block">Ganancia normal</span>
+            <span className="text-2xl font-mono font-bold text-emerald-400">{formatCurrency(clientProfitSummary.normalProfit)}</span>
+            <p className="text-[11px] text-zinc-400">Intereses cobrados en sus préstamos</p>
+          </div>
+
+          <div className="p-5 bg-zinc-900 border border-zinc-800 rounded-2xl space-y-1">
+            <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider block">Ganancia por multas</span>
+            <span className="text-2xl font-mono font-bold text-amber-400">{formatCurrency(clientProfitSummary.fineProfit)}</span>
+            <p className="text-[11px] text-zinc-400">Solo multas cobradas; las pendientes no cuentan</p>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 1c: HISTORIAL DE GANANCIAS POR PRÉSTAMO */}
+      {activeTab === 'resumen' && clientProfitSummary.perLoan.length > 0 && (
+        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 space-y-4">
+          <h3 className="text-base font-bold text-zinc-100">Historial de ganancias por préstamo</h3>
+          <p className="text-xs text-zinc-500">
+            Una fila por préstamo. La suma de estas filas es la ganancia total del cliente.
+          </p>
+          <div className="space-y-2">
+            {clientProfitSummary.perLoan.map(({ loan, normalProfit, fineProfit, totalProfit }) => (
+              <div
+                key={loan.id}
+                className="p-4 bg-[#141414] border border-zinc-800/80 rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-3"
+              >
+                <div className="space-y-1 flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-mono font-bold text-white">ID: {loan.id.slice(0, 8)}...</span>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-zinc-800 text-zinc-300 border border-zinc-700">
+                      {loan.status === 'liquidated' ? 'PAGADO / LIQUIDADO' : loan.status}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-4 text-xs text-zinc-400 flex-wrap">
+                    <span>
+                      <span className="text-zinc-500 font-semibold">Inicio: </span>
+                      <span className="text-zinc-200">{formatDateLocale(loan.startDate)}</span>
+                    </span>
+                    <span>
+                      <span className="text-zinc-500 font-semibold">Monto prestado: </span>
+                      <span className="font-bold text-white font-mono">{formatCurrency(loan.capital)}</span>
+                    </span>
+                    <span>
+                      <span className="text-zinc-500 font-semibold">Pagado: </span>
+                      <span className="font-mono text-zinc-200">{formatCurrency(loan.totalPaid)}</span>
+                    </span>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-3 text-right shrink-0">
+                  <div>
+                    <span className="text-[10px] text-zinc-500 font-bold uppercase block">Ganancia normal</span>
+                    <span className="text-sm font-mono font-bold text-emerald-400">{formatCurrency(normalProfit)}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-zinc-500 font-bold uppercase block">Multas</span>
+                    <span className="text-sm font-mono font-bold text-amber-400">{formatCurrency(fineProfit)}</span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-zinc-500 font-bold uppercase block">Total</span>
+                    <span className="text-sm font-mono font-bold text-white">{formatCurrency(totalProfit)}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -534,6 +627,9 @@ export const ExpedienteClientePage: React.FC = () => {
                 {/* Expanded Schedule Calendar Drawer */}
                 {expandedLoanId === loan.id && (
                   <div className="pt-4 border-t border-zinc-800 space-y-3">
+                    {/* Multas del préstamo: registro manual, cobro y totales */}
+                    <LoanFinesSection loan={loan} />
+
                     <h4 className="text-xs font-bold uppercase tracking-wider text-zinc-400">
                       Calendario del Préstamo ({loan.normalDays || 65} Días{loan.graceDays > 0 ? ` + ${loan.graceDays} de Gracia` : ''})
                     </h4>
@@ -588,6 +684,7 @@ export const ExpedienteClientePage: React.FC = () => {
                 const isActive = loan.status === 'active';
                 const isOverdue = loan.status === 'overdue';
                 const isHistorical = (loan.normalDays === 0 || !loan.schedule || loan.schedule.length === 0) && isLiquidated;
+                const loanProfit = summarizeLoanProfit(loan, transactions, fines);
 
                 return (
                   <div
@@ -642,6 +739,27 @@ export const ExpedienteClientePage: React.FC = () => {
                           <span className="text-zinc-500 font-semibold">Monto prestado: </span>
                           <span className="font-bold text-white font-mono">
                             {formatCurrency(loan.capital)}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-4 text-xs text-zinc-400 flex-wrap">
+                        <div>
+                          <span className="text-zinc-500 font-semibold">Ganancia normal: </span>
+                          <span className="font-bold text-emerald-400 font-mono">
+                            {formatCurrency(loanProfit.normalProfit)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-zinc-500 font-semibold">Ganancia por multas: </span>
+                          <span className="font-bold text-amber-400 font-mono">
+                            {formatCurrency(loanProfit.fineProfit)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-zinc-500 font-semibold">Ganancia total: </span>
+                          <span className="font-bold text-white font-mono">
+                            {formatCurrency(loanProfit.totalProfit)}
                           </span>
                         </div>
                       </div>

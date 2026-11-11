@@ -3,6 +3,7 @@ import { StorageService } from './storage';
 import {
   Client,
   Loan,
+  LoanFine,
   LoanScheduleDay,
   PaymentTransaction,
   AppSettings,
@@ -226,6 +227,75 @@ function mapPaymentFromDb(row: any): PaymentTransaction {
     paymentMethod: (row.payment_method || row.paymentMethod) as PaymentMethod,
     note: row.note ?? undefined,
     dayNumber: row.day_number ?? row.dayNumber ?? undefined,
+    fineId: row.fine_id || row.fineId || undefined,
+    isFineOnly: Boolean(row.is_fine_only ?? row.isFineOnly ?? false),
+  };
+}
+
+/* =========================================================
+   LOAN FINES (multas manuales por préstamo)
+   ---------------------------------------------------------
+   La app funciona aunque la tabla `loan_fines` aún no exista en
+   Supabase (antes de aplicar la migración): en ese caso las
+   multas se guardan solo en localStorage y se avisa por consola.
+   En cuanto se aplica supabase/migrations/20260901_loan_fines.sql,
+   todo se sincroniza con Supabase sin cambiar el código.
+========================================================= */
+
+function isMissingTableError(error: any): boolean {
+  if (!error) return false;
+  const message = String(error.message ?? '');
+  return (
+    error.code === 'PGRST205' ||
+    error.code === '42P01' ||
+    message.includes('loan_fines') ||
+    message.includes('does not exist') ||
+    message.includes('Could not find the table')
+  );
+}
+
+function mapFineFromDb(row: any): LoanFine {
+  const client = Array.isArray(row.clients) ? row.clients[0] : row.clients;
+  const clientName = client
+    ? `${client.first_name ?? ''} ${client.last_name ?? ''}`.trim()
+    : row.clientName || 'Cliente';
+
+  return {
+    id: row.id,
+    loanId: row.loan_id || row.loanId,
+    clientId: row.client_id || row.clientId,
+    clientName,
+    amount: Number(row.amount ?? 0),
+    reason: row.reason ?? '',
+    note: row.note ?? undefined,
+    status: (row.status || 'registered') as LoanFine['status'],
+    date: (row.fine_date || row.date || '').slice(0, 10) || new Date().toISOString().slice(0, 10),
+    createdAt: row.created_at || row.createdAt || new Date().toISOString(),
+    collectedDate: (row.collected_at || row.collectedAt || '')
+      ? String(row.collected_at || row.collectedAt).slice(0, 10)
+      : (row.collected_date || row.collectedDate || undefined),
+    collectedAt: row.collected_at || row.collectedAt || undefined,
+    paymentId: row.payment_id || row.paymentId || undefined,
+    paymentMethod: (row.payment_method || row.paymentMethod) as PaymentMethod | undefined,
+    cancelledAt: row.cancelled_at || row.cancelledAt || undefined,
+  };
+}
+
+function mapFineToDb(fine: Partial<LoanFine>, userId: string) {
+  return {
+    user_id: userId,
+    ...(fine.id ? { id: fine.id } : {}),
+    loan_id: fine.loanId,
+    client_id: fine.clientId,
+    amount: fine.amount,
+    reason: fine.reason ?? '',
+    note: fine.note ?? null,
+    status: fine.status ?? 'registered',
+    fine_date: fine.date,
+    collected_at: fine.collectedAt ?? null,
+    payment_id: fine.paymentId ?? null,
+    payment_method: fine.paymentMethod ?? null,
+    cancelled_at: fine.cancelledAt ?? null,
   };
 }
 
@@ -827,10 +897,22 @@ export const SupabaseStorage = {
       StorageService.saveLoans(loans);
       const txns = StorageService.getTransactions().filter(t => t.loanId !== loanId);
       StorageService.saveTransactions(txns);
+      const fines = StorageService.getFines().filter(f => f.loanId !== loanId);
+      StorageService.saveFines(fines);
       return;
     }
 
     const userId = await getCurrentUserId();
+
+    // Las multas del préstamo se eliminan con él; si la tabla aún no
+    // existe en Supabase se ignora el error (ver getLoanFines).
+    const { error: finesError } = await supabase
+      .from('loan_fines')
+      .delete()
+      .eq('loan_id', loanId)
+      .eq('user_id', userId);
+
+    if (finesError && !isMissingTableError(finesError)) throw finesError;
 
     const { error: paymentsError } = await supabase
       .from('payments')
@@ -924,6 +1006,10 @@ export const SupabaseStorage = {
     paymentMethod: PaymentMethod;
     note?: string;
     dayNumber?: number;
+    /** Multa manual que este pago salda (si aplica). */
+    fineId?: string;
+    /** true si el pago es únicamente el cobro de una multa. */
+    isFineOnly?: boolean;
   }): Promise<PaymentTransaction> {
     if (!isSupabaseConfigured) {
       const clients = StorageService.getClients();
@@ -957,6 +1043,8 @@ export const SupabaseStorage = {
       payment_method: payment.paymentMethod,
       note: payment.note ?? null,
       day_number: payment.dayNumber ?? null,
+      fine_id: payment.fineId ?? null,
+      is_fine_only: payment.isFineOnly ?? false,
     };
 
     let pmtResult: any = null;
@@ -977,9 +1065,12 @@ export const SupabaseStorage = {
     }
 
     if (error && error.code !== 'PGRST200') {
-      // If late_fee_portion column is not in DB table, retry without it
-      if (error.message && (error.message.includes('late_fee_portion') || error.message.includes('column') || error.code === 'PGRST204')) {
-        const { late_fee_portion, ...cleanPayload } = payload;
+      // If late_fee_portion / fine columns are not in the DB table yet
+      // (migración sin aplicar), retry without them. La multa sigue
+      // quedando registrada localmente y su ganancia se cuenta una
+      // sola vez por el vínculo paymentId (ver finance.ts).
+      if (error.message && (error.message.includes('late_fee_portion') || error.message.includes('fine_id') || error.message.includes('is_fine_only') || error.message.includes('column') || error.code === 'PGRST204')) {
+        const { late_fee_portion, fine_id, is_fine_only, ...cleanPayload } = payload;
         const { data: retryData, error: retryError } = await supabase
           .from('payments')
           .insert(cleanPayload)
@@ -1017,6 +1108,183 @@ export const SupabaseStorage = {
       ...pmtData,
       clients: clientRow ? [clientRow] : [],
     });
+  },
+
+  /* =========================
+     LOAN FINES (multas manuales)
+  ========================= */
+
+  async getLoanFines(): Promise<LoanFine[]> {
+    if (!isSupabaseConfigured) {
+      return StorageService.getFines();
+    }
+
+    const userId = await getCurrentUserId();
+
+    const { data, error } = await supabase
+      .from('loan_fines')
+      .select(`
+        *,
+        clients (
+          first_name,
+          last_name
+        )
+      `)
+      .eq('user_id', userId)
+      .order('fine_date', { ascending: false });
+
+    if (!error) {
+      return (data ?? []).map(mapFineFromDb);
+    }
+
+    // Tabla aún no creada en Supabase (migración pendiente): no se
+    // rompe la app; las multas viven en localStorage hasta aplicarla.
+    if (isMissingTableError(error)) {
+      console.warn(
+        'Tabla loan_fines no encontrada en Supabase. Aplica supabase/migrations/20260901_loan_fines.sql para sincronizar las multas. Usando respaldo local.'
+      );
+      return StorageService.getFines();
+    }
+
+    throw error;
+  },
+
+  async createLoanFine(fine: {
+    loanId: string;
+    clientId: string;
+    clientName: string;
+    amount: number;
+    reason: string;
+    note?: string;
+    date: string;
+  }): Promise<LoanFine> {
+    const newFine: LoanFine = {
+      id:
+        typeof crypto !== 'undefined' && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `fine_${Date.now()}`,
+      loanId: fine.loanId,
+      clientId: fine.clientId,
+      clientName: fine.clientName,
+      amount: fine.amount,
+      reason: fine.reason,
+      note: fine.note,
+      status: 'registered',
+      date: fine.date,
+      createdAt: new Date().toISOString(),
+    };
+
+    if (!isSupabaseConfigured) {
+      const fines = StorageService.getFines();
+      StorageService.saveFines([newFine, ...fines]);
+      return newFine;
+    }
+
+    const userId = await getCurrentUserId();
+
+    const { data, error } = await supabase
+      .from('loan_fines')
+      .insert(mapFineToDb(newFine, userId))
+      .select(`
+        *,
+        clients (
+          first_name,
+          last_name
+        )
+      `)
+      .single();
+
+    if (!error && data) {
+      return mapFineFromDb(data);
+    }
+
+    if (error && isMissingTableError(error)) {
+      console.warn(
+        'Tabla loan_fines no encontrada en Supabase. Multa guardada solo en local hasta aplicar la migración.'
+      );
+      const fines = StorageService.getFines();
+      StorageService.saveFines([newFine, ...fines]);
+      return newFine;
+    }
+
+    if (error) throw error;
+
+    return newFine;
+  },
+
+  async updateLoanFine(
+    fineId: string,
+    updates: Partial<LoanFine>
+  ): Promise<LoanFine> {
+    if (!isSupabaseConfigured) {
+      const fines = StorageService.getFines();
+      let updated: LoanFine | null = null;
+      const nextFines = fines.map(f => {
+        if (f.id === fineId) {
+          updated = { ...f, ...updates };
+          return updated;
+        }
+        return f;
+      });
+      StorageService.saveFines(nextFines);
+      if (!updated) throw new Error('Multa no encontrada');
+      return updated;
+    }
+
+    const userId = await getCurrentUserId();
+    const current = (await this.getLoanFines()).find(f => f.id === fineId);
+    if (!current) throw new Error('Multa no encontrada');
+
+    const merged: LoanFine = { ...current, ...updates };
+
+    const { data, error } = await supabase
+      .from('loan_fines')
+      .update(mapFineToDb(merged, userId))
+      .eq('id', fineId)
+      .eq('user_id', userId)
+      .select(`
+        *,
+        clients (
+          first_name,
+          last_name
+        )
+      `)
+      .single();
+
+    if (!error && data) {
+      return mapFineFromDb(data);
+    }
+
+    if (error && isMissingTableError(error)) {
+      console.warn(
+        'Tabla loan_fines no encontrada en Supabase. Cambio guardado solo en local hasta aplicar la migración.'
+      );
+      const fines = StorageService.getFines();
+      StorageService.saveFines(
+        fines.map(f => (f.id === fineId ? merged : f))
+      );
+      return merged;
+    }
+
+    if (error) throw error;
+
+    return merged;
+  },
+
+  async deleteLoanFinesForLoan(loanId: string): Promise<void> {
+    const fines = StorageService.getFines().filter(f => f.loanId !== loanId);
+    StorageService.saveFines(fines);
+
+    if (!isSupabaseConfigured) return;
+
+    const userId = await getCurrentUserId();
+    const { error } = await supabase
+      .from('loan_fines')
+      .delete()
+      .eq('loan_id', loanId)
+      .eq('user_id', userId);
+
+    if (error && !isMissingTableError(error)) throw error;
   },
 
   /* =========================
@@ -1302,6 +1570,13 @@ export const SupabaseStorage = {
     }
 
     const userId = await getCurrentUserId();
+
+    const { error: finesError } = await supabase
+      .from('loan_fines')
+      .delete()
+      .eq('user_id', userId);
+
+    if (finesError && !isMissingTableError(finesError)) throw finesError;
 
     const { error: paymentsError } = await supabase
       .from('payments')

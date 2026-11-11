@@ -11,13 +11,24 @@ interface Props {
 }
 
 export const RegisterPaymentModal: React.FC<Props> = ({ loan, onClose }) => {
-  const { registerPayment } = useApp();
+  const { registerPayment, fines } = useApp();
 
   const [amountReceived, setAmountReceived] = useState<string>('');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
   const [note, setNote] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
+  const [selectedFineIds, setSelectedFineIds] = useState<string[]>([]);
+
+  // Multas manuales pendientes de este préstamo que se pueden saldar
+  // con este pago. Al saldarlas quedan marcadas como cobradas y su
+  // monto ya no se vuelve a contar como ganancia.
+  const pendingFines = loan
+    ? fines.filter(f => f.loanId === loan.id && f.status === 'registered')
+    : [];
+  const selectedFinesTotal = pendingFines
+    .filter(f => selectedFineIds.includes(f.id))
+    .reduce((sum, f) => sum + f.amount, 0);
 
   const lateFeeInfo = loan ? calculateLoanLateFee(loan) : {
     isLateFeeApplicable: false,
@@ -49,6 +60,7 @@ export const RegisterPaymentModal: React.FC<Props> = ({ loan, onClose }) => {
       setNote('');
       setErrorMessage('');
       setIsSubmitting(false);
+      setSelectedFineIds([]);
     }
   }, [loan]);
 
@@ -59,10 +71,16 @@ export const RegisterPaymentModal: React.FC<Props> = ({ loan, onClose }) => {
   const todaySchedule = loan.schedule.find(s => s.date === todayStr);
   const expectedAmount = todaySchedule ? todaySchedule.expectedAmount : loan.dailyPayment;
 
-  // Portion of received amount dedicated to late fee
-  const lateFeePortion = lateFeeInfo.isLateFeeApplicable && lateFeeInfo.totalLateFee > 0
+  // Portion of received amount dedicated to late fees: recargo
+  // automático por mora + multas manuales seleccionadas. Ambas son
+  // multa y se tratan como un solo concepto para no duplicar.
+  const autoLateFeePortion = lateFeeInfo.isLateFeeApplicable && lateFeeInfo.totalLateFee > 0
     ? Math.min(numericAmount, lateFeeInfo.totalLateFee)
     : 0;
+  const lateFeePortion = Math.min(
+    numericAmount,
+    autoLateFeePortion + selectedFinesTotal
+  );
 
   const difference = numericAmount - (expectedAmount + lateFeeInfo.totalLateFee);
   const breakdown = calculatePaymentBreakdown(numericAmount, loan.capital, loan.totalToPay, lateFeePortion);
@@ -77,6 +95,11 @@ export const RegisterPaymentModal: React.FC<Props> = ({ loan, onClose }) => {
       return;
     }
 
+    if (selectedFinesTotal > numericAmount) {
+      setErrorMessage('El monto del pago no alcanza para saldar las multas seleccionadas.');
+      return;
+    }
+
     if (isSubmitting) return;
 
     setIsSubmitting(true);
@@ -88,6 +111,7 @@ export const RegisterPaymentModal: React.FC<Props> = ({ loan, onClose }) => {
         paymentMethod,
         note: note.trim() || undefined,
         lateFeePortion: breakdown.lateFeePortion,
+        fineIds: selectedFineIds.length > 0 ? selectedFineIds : undefined,
       });
 
       if (success) {
@@ -177,6 +201,53 @@ export const RegisterPaymentModal: React.FC<Props> = ({ loan, onClose }) => {
               </div>
             )}
           </div>
+
+          {/* Multas manuales pendientes: saldar con este pago */}
+          {pendingFines.length > 0 && (
+            <div className="p-3 bg-amber-950/20 rounded-xl border border-amber-900/40 space-y-2">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-amber-400">
+                Multas pendientes de este préstamo
+              </p>
+              <p className="text-[11px] text-zinc-400">
+                Marca las multas que se saldan con este pago. Quedarán como cobradas
+                y su monto contará una sola vez como ganancia por multas.
+              </p>
+              {pendingFines.map(fine => {
+                const checked = selectedFineIds.includes(fine.id);
+                return (
+                  <label
+                    key={fine.id}
+                    className="flex items-center justify-between gap-2 p-2 bg-[#161616] rounded-lg border border-[#1F1F1F] cursor-pointer text-xs"
+                  >
+                    <span className="flex items-center gap-2 min-w-0">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() =>
+                          setSelectedFineIds(prev =>
+                            checked
+                              ? prev.filter(id => id !== fine.id)
+                              : [...prev, fine.id]
+                          )
+                        }
+                        className="accent-amber-500 shrink-0"
+                      />
+                      <span className="text-zinc-200 truncate">{fine.reason}</span>
+                    </span>
+                    <span className="font-bold text-amber-300 shrink-0">
+                      {formatCurrency(fine.amount)}
+                    </span>
+                  </label>
+                );
+              })}
+              {selectedFinesTotal > 0 && (
+                <div className="flex justify-between text-xs font-bold text-white pt-1 border-t border-amber-900/30">
+                  <span>Multas a saldar con este pago:</span>
+                  <span className="text-amber-300">{formatCurrency(selectedFinesTotal)}</span>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Input Amount Received */}
           <div>
