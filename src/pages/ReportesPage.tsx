@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { formatCurrency, calculateClientRating } from '../utils/finance';
+import { formatCurrency, calculateClientRating, calculateFineProfit } from '../utils/finance';
 import { getTodayFormatted, addDays, getDaysDifference, formatDateLocale } from '../utils/dates';
 import { StatCard } from '../components/StatCard';
 import {
@@ -9,7 +9,7 @@ import {
 import { BarChart3, Calendar, Banknote, Users, Trophy, TrendingUp, Filter, ShieldAlert } from 'lucide-react';
 
 export const ReportesPage: React.FC = () => {
-  const { loans, clients, transactions } = useApp();
+  const { loans, clients, transactions, fines } = useApp();
 
   const [dateRange, setDateRange] = useState<'today' | 'week' | 'month' | 'custom'>('today');
   const [customStart, setCustomStart] = useState(addDays(getTodayFormatted(), -30));
@@ -39,6 +39,22 @@ export const ReportesPage: React.FC = () => {
   const capitalRecovered = filteredTxns.reduce((sum, t) => sum + t.capitalPortion, 0);
   const profitRecovered = filteredTxns.reduce((sum, t) => sum + t.profitPortion, 0);
 
+  // Ganancia por multas en el periodo, sin duplicar (ver finance.ts):
+  // multas cobradas en el periodo + excedente de mora automática de
+  // pagos del periodo no cubierto por multas manuales. Las multas
+  // registradas pendientes NO se cuentan como ganancia.
+  const fineProfitBreakdown = calculateFineProfit(
+    filteredTxns,
+    fines,
+    isInRange
+  );
+  const fineProfit = fineProfitBreakdown.fineProfit;
+  const totalProfit = profitRecovered + fineProfit;
+  // Multas registradas pendientes en todo el historial (no son ganancia).
+  const pendingFinesTotal = fines
+    .filter(f => f.status === 'registered')
+    .reduce((sum, f) => sum + f.amount, 0);
+
   // New loans created in range
   const newLoans = loans.filter(l => isInRange(l.startDate));
   const totalNewCapital = newLoans.reduce((sum, l) => sum + l.capital, 0);
@@ -52,12 +68,14 @@ export const ReportesPage: React.FC = () => {
     const dayTxns = transactions.filter(t => t.date === d);
     const dayCap = dayTxns.reduce((sum, t) => sum + t.capitalPortion, 0);
     const dayProf = dayTxns.reduce((sum, t) => sum + t.profitPortion, 0);
-    const dayTotal = dayCap + dayProf;
+    const dayFines = calculateFineProfit(dayTxns, fines, date => date === d).fineProfit;
+    const dayTotal = dayCap + dayProf + dayFines;
 
     return {
       day: formatDateLocale(d, { day: 'numeric', month: 'short' }),
       Capital: dayCap,
       Ganancia: dayProf,
+      Multas: dayFines,
       Total: dayTotal
     };
   });
@@ -133,6 +151,8 @@ export const ReportesPage: React.FC = () => {
           breakdown={[
             { label: 'Capital Recup.', value: formatCurrency(capitalRecovered), color: 'text-zinc-300' },
             { label: 'Ganancia Recup.', value: formatCurrency(profitRecovered), color: 'text-[#22C55E]' },
+            { label: 'Multas Cobradas', value: formatCurrency(fineProfit), color: 'text-amber-400' },
+            { label: 'Ganancia Total', value: formatCurrency(totalProfit), color: 'text-white' },
           ]}
         />
 
@@ -152,10 +172,39 @@ export const ReportesPage: React.FC = () => {
 
         <StatCard
           title="Margen de Ganancia"
-          value={totalCollected > 0 ? `${Math.round((profitRecovered / totalCollected) * 100)}%` : '0%'}
-          subtitle="Retorno respecto al cobro total"
+          value={totalCollected > 0 ? `${Math.round((totalProfit / totalCollected) * 100)}%` : '0%'}
+          subtitle="Ganancia normal + multas respecto al cobro total"
           accentColor="amber"
         />
+      </div>
+
+      {/* Ganancias por multas en el periodo */}
+      <div className="bg-[#111111] border border-[#1F1F1F] p-6 rounded-2xl shadow-2xl space-y-3">
+        <h3 className="text-xs font-bold uppercase tracking-widest text-zinc-400 flex items-center gap-2">
+          <ShieldAlert className="w-4 h-4 text-amber-400" />
+          <span>GANANCIAS POR MULTAS</span>
+        </h3>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
+          <div>
+            <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider block">Multas cobradas en periodo</span>
+            <span className="text-lg font-mono font-bold text-amber-400">{formatCurrency(fineProfit)}</span>
+            <p className="text-[11px] text-zinc-500 mt-0.5">
+              Cobradas: {formatCurrency(fineProfitBreakdown.collectedFinesTotal)} · Mora automática: {formatCurrency(fineProfitBreakdown.legacyLateFeeTotal)}
+            </p>
+          </div>
+          <div>
+            <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider block">Multas registradas pendientes</span>
+            <span className="text-lg font-mono font-bold text-zinc-200">{formatCurrency(pendingFinesTotal)}</span>
+            <p className="text-[11px] text-zinc-500 mt-0.5">Aún no son ganancia; se suman solo al cobrarlas.</p>
+          </div>
+          <div>
+            <span className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider block">Ganancia total en periodo</span>
+            <span className="text-lg font-mono font-bold text-emerald-400">{formatCurrency(totalProfit)}</span>
+            <p className="text-[11px] text-zinc-500 mt-0.5">
+              Normal: {formatCurrency(profitRecovered)} + Multas: {formatCurrency(fineProfit)}
+            </p>
+          </div>
+        </div>
       </div>
 
       {/* Financial Charts Section */}
@@ -177,7 +226,8 @@ export const ReportesPage: React.FC = () => {
                   formatter={(val: any) => formatCurrency(Number(val))}
                 />
                 <Bar dataKey="Capital" stackId="a" fill="#3f3f46" radius={[0, 0, 4, 4]} />
-                <Bar dataKey="Ganancia" stackId="a" fill="#22C55E" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="Ganancia" stackId="a" fill="#22C55E" />
+                <Bar dataKey="Multas" stackId="a" fill="#F59E0B" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -187,7 +237,7 @@ export const ReportesPage: React.FC = () => {
         <div className="bg-[#111111] border border-[#1F1F1F] p-6 rounded-2xl shadow-2xl space-y-4 flex flex-col justify-between">
           <h3 className="text-xs font-bold uppercase tracking-widest text-zinc-400">DISTRIBUCIÓN DE COBRANZA</h3>
 
-          {capitalRecovered === 0 && profitRecovered === 0 ? (
+          {capitalRecovered === 0 && profitRecovered === 0 && fineProfit === 0 ? (
             <div className="h-48 w-full flex flex-col items-center justify-center text-center p-4 text-zinc-500">
               <span className="text-xs font-bold text-zinc-300">Sin datos todavía</span>
               <span className="text-[11px] mt-1 text-zinc-500">Registra préstamos y pagos para comenzar a generar estadísticas.</span>
@@ -200,6 +250,7 @@ export const ReportesPage: React.FC = () => {
                     data={[
                       { name: 'Capital Recuperado', value: capitalRecovered, fill: '#3f3f46' },
                       { name: 'Ganancia Recuperada', value: profitRecovered, fill: '#22C55E' },
+                      { name: 'Multas Cobradas', value: fineProfit, fill: '#F59E0B' },
                     ]}
                     dataKey="value"
                     innerRadius={50}
@@ -208,6 +259,7 @@ export const ReportesPage: React.FC = () => {
                   >
                     <Cell fill="#3f3f46" />
                     <Cell fill="#22C55E" />
+                    <Cell fill="#F59E0B" />
                   </Pie>
                   <Tooltip formatter={(val: any) => formatCurrency(Number(val))} />
                 </PieChart>
@@ -229,6 +281,19 @@ export const ReportesPage: React.FC = () => {
                 Ganancia Recuperada
               </span>
               <span className="font-bold text-[#22C55E]">{formatCurrency(profitRecovered)}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="flex items-center gap-2 text-zinc-400">
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
+                Multas Cobradas
+              </span>
+              <span className="font-bold text-amber-400">{formatCurrency(fineProfit)}</span>
+            </div>
+            <div className="flex justify-between items-center pt-1 border-t border-[#1F1F1F]">
+              <span className="flex items-center gap-2 text-zinc-300 font-bold">
+                Ganancia Total
+              </span>
+              <span className="font-bold text-white">{formatCurrency(totalProfit)}</span>
             </div>
           </div>
         </div>

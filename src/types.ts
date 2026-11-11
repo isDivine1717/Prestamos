@@ -94,6 +94,39 @@ export interface PaymentTransaction {
   paymentMethod: PaymentMethod;
   note?: string;
   dayNumber?: number;
+  /** Id de la multa manual que este pago salda (si aplica). */
+  fineId?: string;
+  /** true cuando el pago es únicamente el cobro de una multa (no abona al préstamo). */
+  isFineOnly?: boolean;
+}
+
+/**
+ * Estado de una multa manual registrada por préstamo.
+ * - 'registered': registrada y pendiente de cobro. Aún NO es ganancia.
+ * - 'collected': cobrada y confirmada. SÍ es ganancia realizada.
+ * - 'cancelled': cancelada; nunca fue ni será ganancia.
+ */
+export type FineStatus = 'registered' | 'collected' | 'cancelled';
+
+export interface LoanFine {
+  id: string;
+  loanId: string;
+  clientId: string;
+  clientName: string;
+  amount: number; // Monto de la multa en MXN
+  reason: string; // Motivo de la multa
+  note?: string;
+  status: FineStatus;
+  date: string; // YYYY-MM-DD fecha de registro de la multa
+  createdAt: string; // ISO String
+  /** Fecha de cobro (YYYY-MM-DD), solo cuando status === 'collected'. */
+  collectedDate?: string;
+  /** Instante de cobro (ISO), solo cuando status === 'collected'. */
+  collectedAt?: string;
+  /** Id de la transacción de pago que saldó la multa (una sola fuente de verdad). */
+  paymentId?: string;
+  paymentMethod?: PaymentMethod;
+  cancelledAt?: string; // ISO String
 }
 
 export interface AppSettings {

@@ -1,4 +1,4 @@
-import { Loan, LoanScheduleDay, ProfitType, PaymentTransaction } from '../types';
+import { Loan, LoanScheduleDay, ProfitType, PaymentTransaction, LoanFine } from '../types';
 import { addDays, getTodayFormatted, getDaysDifference } from './dates';
 
 /**
@@ -240,6 +240,210 @@ export function updateLoanStatusAndSchedule(loan: Loan, todayDate: string = getT
     status,
     schedule: updatedSchedule,
     liquidatedAt: status === 'liquidated' && !loan.liquidatedAt ? todayDate : loan.liquidatedAt
+  };
+}
+
+/* ==========================================================================
+   GANANCIAS POR MULTAS — ÚNICA FUENTE DE VERDAD (sin duplicar)
+   --------------------------------------------------------------------------
+   Regla:
+   - Una multa REGISTRADA (pendiente) NO es ganancia todavía.
+   - Una multa COBRADA sí es ganancia realizada, y su cobro siempre pasa
+     por una transacción de pago cuyo `lateFeePortion` es el monto de la
+     multa. La multa guarda el `paymentId` de esa transacción.
+   - La ganancia normal (`profitPortion`) NUNCA incluye la multa: el
+     desglose del pago resta primero la porción de multa y reparte solo
+     el resto entre capital y ganancia normal (ver calculatePaymentBreakdown).
+   - Por eso la ganancia por multas es:
+         multas cobradas (por su monto, vinculadas por paymentId)
+         + mora automática histórica: de cada transacción, solo el
+           excedente de su lateFeePortion sobre las multas manuales
+           vinculadas a esa misma transacción (p. ej. recargos
+           cobrados antes de que existiera el registro manual, o la
+           parte automática de un pago que también saldó multas).
+     Nunca se suma el monto del pago y el de la multa por separado:
+     de una transacción vinculada a multas solo se cuenta el excedente
+     no cubierto por esas multas.
+   - Ganancia total = ganancia normal + ganancia por multas.
+   - Y se cumple: total cobrado = capital recuperado + ganancia normal
+     + ganancia por multas (las multas cobradas solas tienen capital 0
+     y ganancia normal 0; su monto entero es lateFeePortion).
+   ========================================================================== */
+
+export function roundMoney(amount: number): number {
+  return Math.round((amount + Number.EPSILON) * 100) / 100;
+}
+
+export interface FineProfitBreakdown {
+  /** Ganancia realizada por multas (cobrado). */
+  fineProfit: number;
+  /** Suma de multas con estado 'collected' (en el rango, si se filtra). */
+  collectedFinesTotal: number;
+  /** Mora automática histórica sin multa manual vinculada. */
+  legacyLateFeeTotal: number;
+  /** Multas registradas pendientes (NO son ganancia). */
+  registeredPendingTotal: number;
+}
+
+/**
+ * Ganancia por multas, sin duplicar. `isInRange` filtra por fecha:
+ * para multas cobradas usa su fecha de cobro; para mora histórica
+ * usa la fecha de la transacción. Sin filtro, suma todo el historial.
+ */
+export function calculateFineProfit(
+  transactions: PaymentTransaction[],
+  fines: LoanFine[],
+  isInRange?: (date: string) => boolean
+): FineProfitBreakdown {
+  const inRange = (date?: string) =>
+    !isInRange || (date !== undefined && date !== '' && isInRange(date));
+
+  const allCollectedFines = fines.filter(f => f.status === 'collected');
+  const collectedFines = allCollectedFines.filter(f =>
+    inRange(f.collectedDate ?? f.date)
+  );
+  const collectedFinesTotal = roundMoney(
+    collectedFines.reduce((sum, f) => sum + (Number(f.amount) || 0), 0)
+  );
+
+  // De cada transacción, solo se cuenta como mora histórica la parte
+  // de su lateFeePortion que NO corresponde a multas manuales ya
+  // contadas arriba. Así un pago que trae mora automática ($100) y
+  // además salda multas manuales ($50) aporta $50 de mora + $50 de
+  // multas, nunca $100 + $50 ni $50 solos.
+  const linkedFineAmountByPayment = new Map<string, number>();
+  for (const f of allCollectedFines) {
+    if (!f.paymentId) continue;
+    linkedFineAmountByPayment.set(
+      f.paymentId,
+      (linkedFineAmountByPayment.get(f.paymentId) ?? 0) +
+        (Number(f.amount) || 0)
+    );
+  }
+  const legacyLateFeeTotal = roundMoney(
+    transactions
+      .filter(t => (Number(t.lateFeePortion) || 0) > 0)
+      // Un cobro directo de multa (isFineOnly) siempre corresponde a
+      // su multa registrada; si no hay vínculo es porque la multa se
+      // registró fuera del rango o se perdió, y su monto ya se contó
+      // (o se contará) por la multa, no por la transacción.
+      .filter(t => !t.isFineOnly)
+      .filter(t => inRange(t.date))
+      .reduce((sum, t) => {
+        const linked = linkedFineAmountByPayment.get(t.id) ?? 0;
+        return sum + Math.max(0, (Number(t.lateFeePortion) || 0) - linked);
+      }, 0)
+  );
+
+  const registeredPendingTotal = roundMoney(
+    fines
+      .filter(f => f.status === 'registered')
+      .reduce((sum, f) => sum + (Number(f.amount) || 0), 0)
+  );
+
+  return {
+    fineProfit: roundMoney(collectedFinesTotal + legacyLateFeeTotal),
+    collectedFinesTotal,
+    legacyLateFeeTotal,
+    registeredPendingTotal,
+  };
+}
+
+/**
+ * Ganancia normal de un préstamo. Fuente preferida: la suma de
+ * `profitPortion` de sus transacciones (excluye multas por diseño).
+ * Si el préstamo no tiene transacciones (p. ej. préstamos históricos
+ * de libreta), se usa `loan.profitRecovered` como respaldo.
+ */
+export function calculateNormalProfitForLoan(
+  loan: Loan,
+  transactions: PaymentTransaction[]
+): number {
+  const loanTxns = transactions.filter(t => t.loanId === loan.id);
+  if (loanTxns.length === 0) {
+    return roundMoney(Number(loan.profitRecovered) || 0);
+  }
+  return roundMoney(
+    loanTxns.reduce((sum, t) => sum + (Number(t.profitPortion) || 0), 0)
+  );
+}
+
+export interface LoanProfitSummary {
+  loanId: string;
+  normalProfit: number;
+  fineProfit: number;
+  totalProfit: number;
+}
+
+/** Ganancia de un préstamo, desglosada y coherente con los totales. */
+export function summarizeLoanProfit(
+  loan: Loan,
+  transactions: PaymentTransaction[],
+  fines: LoanFine[]
+): LoanProfitSummary {
+  const normalProfit = calculateNormalProfitForLoan(loan, transactions);
+  const { fineProfit } = calculateFineProfit(
+    transactions.filter(t => t.loanId === loan.id),
+    fines.filter(f => f.loanId === loan.id)
+  );
+  return {
+    loanId: loan.id,
+    normalProfit,
+    fineProfit,
+    totalProfit: roundMoney(normalProfit + fineProfit),
+  };
+}
+
+export interface ClientProfitSummary {
+  loanCount: number;
+  activeLoanCount: number;
+  liquidatedLoanCount: number;
+  capitalLent: number;
+  totalPaid: number;
+  normalProfit: number;
+  fineProfit: number;
+  totalProfit: number;
+  perLoan: Array<LoanProfitSummary & { loan: Loan }>;
+}
+
+/** Ganancia histórica de un cliente (expediente). La suma por préstamo
+ *  cuadra con la ganancia total de la app porque usa los mismos
+ *  helpers que Reportes. */
+export function summarizeClientProfit(
+  clientId: string,
+  loans: Loan[],
+  transactions: PaymentTransaction[],
+  fines: LoanFine[]
+): ClientProfitSummary {
+  const clientLoans = loans.filter(l => l.clientId === clientId);
+  const perLoan = clientLoans.map(loan => ({
+    loan,
+    ...summarizeLoanProfit(loan, transactions, fines),
+  }));
+  const normalProfit = roundMoney(
+    perLoan.reduce((sum, p) => sum + p.normalProfit, 0)
+  );
+  const fineProfit = roundMoney(
+    perLoan.reduce((sum, p) => sum + p.fineProfit, 0)
+  );
+  return {
+    loanCount: clientLoans.length,
+    activeLoanCount: clientLoans.filter(
+      l => l.status === 'active' || l.status === 'overdue'
+    ).length,
+    liquidatedLoanCount: clientLoans.filter(
+      l => l.status === 'liquidated'
+    ).length,
+    capitalLent: roundMoney(
+      clientLoans.reduce((sum, l) => sum + (Number(l.capital) || 0), 0)
+    ),
+    totalPaid: roundMoney(
+      clientLoans.reduce((sum, l) => sum + (Number(l.totalPaid) || 0), 0)
+    ),
+    normalProfit,
+    fineProfit,
+    totalProfit: roundMoney(normalProfit + fineProfit),
+    perLoan,
   };
 }
 

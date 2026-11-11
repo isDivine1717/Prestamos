@@ -1,4 +1,4 @@
-import { Client, Loan, PaymentTransaction, AppSettings, AdminUser, ClientDocument } from '../types';
+import { Client, Loan, LoanFine, PaymentTransaction, AppSettings, AdminUser, ClientDocument } from '../types';
 import { updateLoanStatusAndSchedule } from '../utils/finance';
 import { getTodayFormatted } from '../utils/dates';
 
@@ -6,6 +6,7 @@ const STORAGE_KEYS = {
   CLIENTS: 'gp_clients_v1',
   LOANS: 'gp_loans_v1',
   TRANSACTIONS: 'gp_transactions_v1',
+  FINES: 'gp_fines_v1',
   SETTINGS: 'gp_settings_v1',
   AUTH: 'gp_auth_v1',
 };
@@ -82,6 +83,20 @@ export const StorageService = {
     localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify(txns));
   },
 
+  getFines(): LoanFine[] {
+    const raw = localStorage.getItem(STORAGE_KEYS.FINES);
+    if (!raw) return [];
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return [];
+    }
+  },
+
+  saveFines(fines: LoanFine[]): void {
+    localStorage.setItem(STORAGE_KEYS.FINES, JSON.stringify(fines));
+  },
+
   getSettings(): AppSettings {
     const raw = localStorage.getItem(STORAGE_KEYS.SETTINGS);
     if (!raw) return DEFAULT_SETTINGS;
@@ -116,6 +131,7 @@ export const StorageService = {
       clients: this.getClients(),
       loans: this.getLoans(),
       transactions: this.getTransactions(),
+      fines: this.getFines(),
       settings: this.getSettings()
     };
     return JSON.stringify(data, null, 2);
@@ -128,6 +144,7 @@ export const StorageService = {
         if (Array.isArray(parsed.clients)) this.saveClients(parsed.clients);
         if (Array.isArray(parsed.loans)) this.saveLoans(parsed.loans);
         if (Array.isArray(parsed.transactions)) this.saveTransactions(parsed.transactions);
+        if (Array.isArray(parsed.fines)) this.saveFines(parsed.fines);
         if (parsed.settings) this.saveSettings(parsed.settings);
         return true;
       }
@@ -141,6 +158,7 @@ export const StorageService = {
     localStorage.setItem(STORAGE_KEYS.CLIENTS, JSON.stringify([]));
     localStorage.setItem(STORAGE_KEYS.LOANS, JSON.stringify([]));
     localStorage.setItem(STORAGE_KEYS.TRANSACTIONS, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.FINES, JSON.stringify([]));
   },
 
   resetToDemo(): void {

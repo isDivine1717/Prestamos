@@ -8,6 +8,7 @@ import React, {
 import {
   Client,
   Loan,
+  LoanFine,
   PaymentTransaction,
   AppSettings,
   AdminUser,
@@ -45,6 +46,7 @@ interface AppContextType {
   clients: Client[];
   loans: Loan[];
   transactions: PaymentTransaction[];
+  fines: LoanFine[];
   settings: AppSettings;
   adminUser: AdminUser;
 
@@ -165,7 +167,27 @@ interface AppContextType {
     paymentMethod: PaymentMethod;
     note?: string;
     lateFeePortion?: number;
+    /** Ids de multas manuales que este pago salda. */
+    fineIds?: string[];
   }) => Promise<boolean>;
+
+  // MULTAS MANUALES POR PRÉSTAMO
+  addLoanFine: (data: {
+    loanId: string;
+    amount: number;
+    date: string;
+    reason: string;
+    note?: string;
+  }) => Promise<LoanFine>;
+
+  /** Cobra una multa registrada con un pago exclusivo de multa.
+   *  No abona al préstamo (no toca calendario ni saldo). */
+  collectLoanFine: (
+    fineId: string,
+    paymentMethod: PaymentMethod
+  ) => Promise<boolean>;
+
+  cancelLoanFine: (fineId: string) => Promise<void>;
 
   // CONFIGURACION
   updateSettings: (
@@ -220,6 +242,9 @@ export const AppProvider: React.FC<{
 
   const [transactions, setTransactions] =
     useState<PaymentTransaction[]>([]);
+
+  const [fines, setFines] =
+    useState<LoanFine[]>([]);
 
   const [settings, setSettings] =
     useState<AppSettings>(DEFAULT_SETTINGS);
@@ -389,6 +414,7 @@ export const AppProvider: React.FC<{
           setClients([]);
           setLoans([]);
           setTransactions([]);
+          setFines([]);
           setSettings(DEFAULT_SETTINGS);
         }
 
@@ -411,6 +437,7 @@ export const AppProvider: React.FC<{
       setClients([]);
       setLoans([]);
       setTransactions([]);
+      setFines([]);
       setSettings(DEFAULT_SETTINGS);
       return;
     }
@@ -421,18 +448,22 @@ export const AppProvider: React.FC<{
           loadedClients,
           loadedLoans,
           loadedTransactions,
-          loadedSettings
+          loadedSettings,
+          loadedFines
         ] = await Promise.all([
           SupabaseStorage.getClients(),
           SupabaseStorage.getLoans(),
           SupabaseStorage.getTransactions(),
-          SupabaseStorage.getSettings()
+          SupabaseStorage.getSettings(),
+          // Si la tabla de multas aún no existe, no se rompe la carga.
+          SupabaseStorage.getLoanFines().catch(() => [] as LoanFine[])
         ]);
 
         setClients(loadedClients);
         setLoans(loadedLoans);
         setTransactions(loadedTransactions);
         setSettings(loadedSettings);
+        setFines(loadedFines);
       } catch (error: any) {
         console.error(
           'Error cargando datos desde la base de datos:',
@@ -620,6 +651,12 @@ export const AppProvider: React.FC<{
         prev.filter(
           transaction =>
             transaction.clientId !== id
+        )
+      );
+
+      setFines(prev =>
+        prev.filter(
+          fine => fine.clientId !== id
         )
       );
 
@@ -1048,6 +1085,10 @@ export const AppProvider: React.FC<{
         prev.filter(transaction => transaction.loanId !== loanId)
       );
 
+      setFines(prev =>
+        prev.filter(fine => fine.loanId !== loanId)
+      );
+
       if (
         registerPaymentModalLoan &&
         registerPaymentModalLoan.id === loanId
@@ -1081,6 +1122,7 @@ export const AppProvider: React.FC<{
       paymentMethod: PaymentMethod;
       note?: string;
       lateFeePortion?: number;
+      fineIds?: string[];
     }
   ): Promise<boolean> => {
     try {
@@ -1105,6 +1147,50 @@ export const AppProvider: React.FC<{
         new Date().toISOString();
 
       /* -----------------------------------------
+         MULTAS MANUALES QUE SALDA ESTE PAGO
+         La porción de multa del pago debe cubrir el total de
+         las multas seleccionadas; si no alcanza, no se salda
+         ninguna (se evita cobrar una multa "a medias").
+      ----------------------------------------- */
+
+      const selectedFines = (params.fineIds ?? [])
+        .map(id => fines.find(f => f.id === id))
+        .filter((f): f is LoanFine => Boolean(f));
+
+      const invalidFine = selectedFines.find(
+        f => f.loanId !== loan.id || f.status !== 'registered'
+      );
+
+      if (invalidFine) {
+        showToast(
+          'Una de las multas seleccionadas ya no está pendiente.',
+          'error'
+        );
+        return false;
+      }
+
+      const selectedFinesTotal = Math.round(
+        (selectedFines.reduce((sum, f) => sum + f.amount, 0) +
+          Number.EPSILON) * 100
+      ) / 100;
+
+      if (selectedFinesTotal > params.amountReceived) {
+        showToast(
+          'El monto del pago no alcanza para saldar las multas seleccionadas.',
+          'error'
+        );
+        return false;
+      }
+
+      // La porción de multa es lo mayor entre el recargo automático
+      // y las multas manuales seleccionadas (ambas son multa, y el
+      // desglose las trata como un solo concepto para no duplicar).
+      const effectiveLateFeePortion = Math.min(
+        params.amountReceived,
+        Math.max(params.lateFeePortion ?? 0, selectedFinesTotal)
+      );
+
+      /* -----------------------------------------
          CALCULAR CAPITAL Y GANANCIA
       ----------------------------------------- */
 
@@ -1117,7 +1203,7 @@ export const AppProvider: React.FC<{
           params.amountReceived,
           loan.capital,
           loan.totalToPay,
-          params.lateFeePortion ?? 0
+          effectiveLateFeePortion
         );
 
       /* -----------------------------------------
@@ -1179,7 +1265,8 @@ export const AppProvider: React.FC<{
           note: params.note,
           dayNumber: targetDay
             ? targetDay.dayNumber
-            : undefined
+            : undefined,
+          fineId: selectedFines[0]?.id
         });
 
       /* -----------------------------------------
@@ -1380,6 +1467,58 @@ export const AppProvider: React.FC<{
       ]);
 
       /* -----------------------------------------
+         MARCAR LAS MULTAS SALDADAS COMO COBRADAS
+         Una sola fuente de verdad: el pago ya registró la
+         porción de multa; la multa solo cambia de estado y
+         guarda el paymentId. Si la persistencia falla, el
+         estado local se actualiza igual para que la ganancia
+         no se cuente dos veces ni se pierda.
+      ----------------------------------------- */
+
+      if (selectedFines.length > 0) {
+        const collectedAt = new Date().toISOString();
+
+        for (const fine of selectedFines) {
+          try {
+            const updatedFine =
+              await SupabaseStorage.updateLoanFine(fine.id, {
+                status: 'collected',
+                collectedAt,
+                collectedDate: today,
+                paymentId: newTransaction.id,
+                paymentMethod: params.paymentMethod
+              });
+
+            setFines(prev =>
+              prev.map(item =>
+                item.id === fine.id ? updatedFine : item
+              )
+            );
+          } catch (error) {
+            console.error(
+              'No se pudo marcar la multa como cobrada en la base:',
+              error
+            );
+
+            setFines(prev =>
+              prev.map(item =>
+                item.id === fine.id
+                  ? {
+                      ...item,
+                      status: 'collected' as const,
+                      collectedAt,
+                      collectedDate: today,
+                      paymentId: newTransaction.id,
+                      paymentMethod: params.paymentMethod
+                    }
+                  : item
+              )
+            );
+          }
+        }
+      }
+
+      /* -----------------------------------------
          ACTUALIZAR RATING
       ----------------------------------------- */
 
@@ -1421,6 +1560,185 @@ export const AppProvider: React.FC<{
       );
 
       return false;
+    }
+  };
+
+  /* =========================================================
+     MULTAS MANUALES POR PRÉSTAMO
+     ---------------------------------------------------------
+     - Registrar una multa NO es ganancia: queda 'registered'.
+     - Cobrarla SÍ es ganancia, y el cobro siempre genera una
+       transacción con lateFeePortion = monto de la multa, para
+       que la ganancia por multas tenga una sola fuente de verdad
+       (ver calculateFineProfit en utils/finance.ts).
+     - El cobro directo NO abona al préstamo: no toca el
+       calendario, el total pagado ni el saldo pendiente, porque
+       la multa es un cargo extra sobre el total a pagar.
+  ========================================================= */
+
+  const addLoanFine = async (data: {
+    loanId: string;
+    amount: number;
+    date: string;
+    reason: string;
+    note?: string;
+  }): Promise<LoanFine> => {
+    const loan = loans.find(item => item.id === data.loanId);
+
+    if (!loan) {
+      throw new Error('No se encontró el préstamo especificado.');
+    }
+
+    if (!(data.amount > 0)) {
+      throw new Error('El monto de la multa debe ser mayor a $0.');
+    }
+
+    if (!data.reason.trim()) {
+      throw new Error('Indica el motivo de la multa.');
+    }
+
+    const newFine = await SupabaseStorage.createLoanFine({
+      loanId: loan.id,
+      clientId: loan.clientId,
+      clientName: loan.clientName,
+      amount: Math.round((data.amount + Number.EPSILON) * 100) / 100,
+      reason: data.reason.trim(),
+      note: data.note?.trim() || undefined,
+      date: data.date
+    });
+
+    setFines(prev => [newFine, ...prev]);
+
+    showToast(
+      `Multa de $${newFine.amount.toLocaleString('es-MX')} registrada. Aún no es ganancia hasta cobrarla.`
+    );
+
+    return newFine;
+  };
+
+  const collectLoanFine = async (
+    fineId: string,
+    paymentMethod: PaymentMethod
+  ): Promise<boolean> => {
+    try {
+      const fine = fines.find(item => item.id === fineId);
+
+      if (!fine) {
+        showToast('No se encontró la multa especificada.', 'error');
+        return false;
+      }
+
+      if (fine.status !== 'registered') {
+        showToast('Esta multa ya no está pendiente de cobro.', 'error');
+        return false;
+      }
+
+      const today = getTodayFormatted();
+      const timestamp = new Date().toISOString();
+
+      // Pago exclusivo de multa: capital 0, ganancia normal 0 y
+      // lateFeePortion = monto de la multa. No se toca el préstamo.
+      const newTransaction = await SupabaseStorage.createPayment({
+        loanId: fine.loanId,
+        clientId: fine.clientId,
+        paymentDate: today,
+        expectedAmount: fine.amount,
+        amountReceived: fine.amount,
+        capitalPortion: 0,
+        profitPortion: 0,
+        lateFeePortion: fine.amount,
+        difference: 0,
+        paymentMethod,
+        note: `Cobro de multa: ${fine.reason}`,
+        fineId: fine.id,
+        isFineOnly: true
+      });
+
+      let updatedFine: LoanFine;
+
+      try {
+        updatedFine = await SupabaseStorage.updateLoanFine(fine.id, {
+          status: 'collected',
+          collectedAt: timestamp,
+          collectedDate: today,
+          paymentId: newTransaction.id,
+          paymentMethod
+        });
+      } catch (error) {
+        console.error(
+          'No se pudo marcar la multa como cobrada en la base:',
+          error
+        );
+
+        updatedFine = {
+          ...fine,
+          status: 'collected',
+          collectedAt: timestamp,
+          collectedDate: today,
+          paymentId: newTransaction.id,
+          paymentMethod
+        };
+
+        showToast(
+          'Multa cobrada, pero no se pudo sincronizar su estado. Revisa la conexión.',
+          'info'
+        );
+      }
+
+      setFines(prev =>
+        prev.map(item => (item.id === fine.id ? updatedFine : item))
+      );
+
+      setTransactions(prev => [newTransaction, ...prev]);
+
+      showToast(
+        `Multa de $${fine.amount.toLocaleString('es-MX')} cobrada. Ya cuenta como ganancia por multas.`
+      );
+
+      return true;
+    } catch (error: any) {
+      console.error('Error cobrando multa:', error);
+
+      showToast(
+        error?.message || 'No se pudo cobrar la multa.',
+        'error'
+      );
+
+      return false;
+    }
+  };
+
+  const cancelLoanFine = async (fineId: string): Promise<void> => {
+    const fine = fines.find(item => item.id === fineId);
+
+    if (!fine) {
+      showToast('No se encontró la multa especificada.', 'error');
+      return;
+    }
+
+    if (fine.status !== 'registered') {
+      showToast('Solo se pueden cancelar multas pendientes.', 'error');
+      return;
+    }
+
+    try {
+      const updatedFine = await SupabaseStorage.updateLoanFine(fine.id, {
+        status: 'cancelled',
+        cancelledAt: new Date().toISOString()
+      });
+
+      setFines(prev =>
+        prev.map(item => (item.id === fine.id ? updatedFine : item))
+      );
+
+      showToast('Multa cancelada. No contará como ganancia.', 'info');
+    } catch (error: any) {
+      console.error('Error cancelando multa:', error);
+
+      showToast(
+        error?.message || 'No se pudo cancelar la multa.',
+        'error'
+      );
     }
   };
 
@@ -1734,6 +2052,7 @@ export const AppProvider: React.FC<{
         setClients([]);
         setLoans([]);
         setTransactions([]);
+        setFines([]);
         setSelectedClientId(null);
         setViewingDocument(null);
         setRegisterPaymentModalLoan(null);
@@ -1765,6 +2084,7 @@ export const AppProvider: React.FC<{
       clients,
       loans,
       transactions,
+      fines,
       settings,
       exportedAt:
         new Date().toISOString()
@@ -1836,6 +2156,13 @@ export const AppProvider: React.FC<{
         );
       }
 
+      if (
+        data.fines &&
+        Array.isArray(data.fines)
+      ) {
+        setFines(data.fines);
+      }
+
       if (data.settings) {
         setSettings(data.settings);
       }
@@ -1876,6 +2203,7 @@ export const AppProvider: React.FC<{
         clients,
         loans,
         transactions,
+        fines,
         settings,
         adminUser,
 
@@ -1928,6 +2256,10 @@ export const AppProvider: React.FC<{
         deleteLoan,
 
         registerPayment,
+
+        addLoanFine,
+        collectLoanFine,
+        cancelLoanFine,
 
         updateSettings,
 
